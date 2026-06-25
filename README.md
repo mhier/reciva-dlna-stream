@@ -21,8 +21,10 @@ dlna-stream --stream-url "https://example.com/radio-stream.mp3"
 |--------|-------------|
 | `--stream-url` | URL of the internet radio stream (required) |
 | `--name` | Friendly name of the DLNA server (default: "Internet Radio Stream") |
-| `--port` | HTTP server port (default: 0 = auto) |
+| `--port` | HTTP server port (default: 0 = auto-assign) |
 | `--mime-type` | MIME type of the stream (default: audio/mpeg) |
+| `--bind-ip` | IP address to bind the HTTP server to (default: 0.0.0.0) |
+| `--verbose`, `-v` | Enable verbose (debug) logging |
 
 ## How it works
 
