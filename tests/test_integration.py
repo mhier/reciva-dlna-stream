@@ -126,8 +126,9 @@ async def test_dlna_stream_proxying(
             assert resp.status == 200
             assert resp.content_type == "audio/mpeg"
 
-            # Read all data
-            received = await resp.read()
+            # Read only the expected amount of data (the server has a fake
+            # large Content-Length so we must not read until EOF).
+            received = await resp.content.readexactly(len(dummy_mp3_data))
 
     # --- Phase 4: Verify content ---
     assert len(received) > 0, "Stream returned no data"
@@ -152,7 +153,7 @@ async def test_stream_stops_when_no_clients(
     # Read a small chunk then disconnect
     async with ClientSession() as session:
         async with session.get(f"{dlna_base_uri}/stream", timeout=STREAM_READ_TIMEOUT) as resp:
-            chunk = await resp.content.read(1024)
+            chunk = await resp.content.readexactly(1024)
             assert len(chunk) == 1024
 
     # Give the forwarder time to clean up
@@ -164,7 +165,7 @@ async def test_stream_stops_when_no_clients(
     # is cleaned up properly (no unclosed tasks).
     async with ClientSession() as session:
         async with session.get(f"{dlna_base_uri}/stream", timeout=STREAM_READ_TIMEOUT) as resp:
-            chunk = await resp.content.read(512)
+            chunk = await resp.content.readexactly(512)
             assert len(chunk) == 512
 
 
@@ -189,3 +190,141 @@ async def test_browse_metadata(dlna_base_uri: str) -> None:
     assert container.upnp_class.startswith("object.container")
     # childCount is a string in the XML, DIDL-Lite parser keeps it as string
     assert container.child_count == "1"
+
+
+@pytest.mark.asyncio
+async def test_range_request(
+    dlna_base_uri: str,
+    dummy_mp3_data: bytes,
+) -> None:
+    """
+    Test that Range requests return 206 Partial Content with correct
+    headers and are bounded to the requested byte window.
+    """
+    range_size = len(dummy_mp3_data)
+    range_end = range_size - 1
+
+    async with ClientSession() as session:
+        async with session.get(
+            f"{dlna_base_uri}/stream",
+            headers={"Range": f"bytes=0-{range_end}"},
+            timeout=STREAM_READ_TIMEOUT,
+        ) as resp:
+            assert resp.status == 206, f"Expected 206, got {resp.status}"
+            assert resp.headers.get("Content-Range", "").startswith(
+                f"bytes 0-{range_end}/"
+            ), f"Bad Content-Range: {resp.headers.get('Content-Range')}"
+            assert resp.headers.get("Content-Length") == str(range_size), (
+                f"Expected Content-Length: {range_size}, got "
+                f"{resp.headers.get('Content-Length')}"
+            )
+            assert resp.headers.get("Accept-Ranges") == "bytes"
+            assert resp.headers.get("TransferMode.DLNA.ORG") == "Streaming"
+
+            data = await resp.content.readexactly(range_size)
+            assert len(data) == range_size, (
+                f"Expected {range_size} bytes, got {len(data)}"
+            )
+            assert data == dummy_mp3_data, "Range data must match"
+
+
+@pytest.mark.asyncio
+async def test_device_xml_valid(dlna_base_uri: str) -> None:
+    """
+    Test that the device description XML is valid and contains the correct
+    URLs (not port 0).
+    """
+    async with ClientSession() as session:
+        async with session.get(
+            f"{dlna_base_uri}/device.xml",
+            timeout=STREAM_READ_TIMEOUT,
+        ) as resp:
+            assert resp.status == 200
+            text = await resp.text()
+
+            # Verify the XML is well-formed and contains expected content
+            assert "urn:schemas-upnp-org:device:MediaServer:1" in text
+            assert "Test Radio Stream" in text
+            assert "/ContentDirectory_1.xml" in text
+            assert "/ConnectionManager_1.xml" in text
+
+            # Verify it's parseable XML
+            import xml.etree.ElementTree as ET
+            root = ET.fromstring(text)
+            assert root.tag.endswith("root"), (
+                f"Expected root element, got {root.tag}"
+            )
+
+            # Verify the UDN is present and is not the default placeholder
+            ns = {"upnp": "urn:schemas-upnp-org:device-1-0"}
+            udn_el = root.find(".//upnp:UDN", ns)
+            assert udn_el is not None and udn_el.text
+            assert udn_el.text.startswith("uuid:")
+            assert "00000000-0000" not in udn_el.text, (
+                "UDN should not be the default placeholder"
+            )
+
+            # Verify the device has services
+            service_list = root.find(".//upnp:serviceList", ns)
+            assert service_list is not None
+            services = service_list.findall("upnp:service", ns)
+            assert len(services) == 2, (
+                f"Expected 2 services, got {len(services)}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_ssdp_location_port(dlna_server, dlna_base_uri: str) -> None:
+    """
+    Verify that the SSDP advertisement LOCATION URL contains the correct
+    port (not 0). We do this by scraping SSDP NOTIFY packets.
+    """
+    import socket
+    import struct
+    import asyncio
+
+    SOCKET_TIMEOUT = 5
+    MCAST_GRP = "239.255.255.250"
+    MCAST_PORT = 1900
+
+    # Listen for SSDP multicast packets
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("", MCAST_PORT))
+    mreq = struct.pack("4sl", socket.inet_aton(MCAST_GRP), socket.INADDR_ANY)
+    sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+    sock.setblocking(False)
+
+    expected_location = f"{dlna_base_uri}/device.xml"
+    found = False
+
+    try:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + SOCKET_TIMEOUT
+        while loop.time() < deadline:
+            try:
+                data = await loop.sock_recv(sock, 4096)
+                packet = data.decode("utf-8", errors="replace")
+                for line in packet.split("\r\n"):
+                    if line.lower().startswith("location:"):
+                        url = line.split(":", 1)[1].strip()
+                        if url == expected_location:
+                            found = True
+                            _LOGGER.info(
+                                "SSDP LOCATION matches: %s", url
+                            )
+                            break
+            except (BlockingIOError, TimeoutError):
+                await asyncio.sleep(0.1)
+                continue
+            if found:
+                break
+    finally:
+        sock.close()
+
+    assert found, (
+        f"Did not find SSDP advertisement with LOCATION={expected_location} "
+        f"in {SOCKET_TIMEOUT}s. SSDP advertisements are sent every ~30s by "
+        f"default, so the test may need a longer timeout or the server may "
+        f"not have sent one yet."
+    )

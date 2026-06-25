@@ -328,6 +328,14 @@ class ContentDirectoryService(UpnpServerService):
         else:
             result = ""
 
+        _LOGGER.debug(
+            "Browse result for %s/%s: %d chars, url=%s",
+            ObjectID,
+            BrowseFlag,
+            len(result),
+            stream_url,
+        )
+
         return {
             "Result": result,
             "NumberReturned": 1 if result else 0,

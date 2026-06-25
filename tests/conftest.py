@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import time
+import socket
 from typing import AsyncIterator
 from uuid import uuid4
 
@@ -11,10 +11,28 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer, unused_port
 
-from async_upnp_client.server import UpnpServer
-
 from dlna_stream.forwarder import StreamForwarder
 from dlna_stream.server import MediaServerDevice
+from dlna_stream.server_lifecycle import ServerHandle, start_server
+
+# ---------------------------------------------------------------------------
+# Apply the SSDP TTL monkey-patch (TTL 4 per UPnP spec, library uses 2)
+# ---------------------------------------------------------------------------
+import async_upnp_client.ssdp as _ssdp_module
+
+_orig_get_ssdp_socket = _ssdp_module.get_ssdp_socket
+
+
+def _patched_get_ssdp_socket(*args, **kwargs):
+    sock, src, tgt = _orig_get_ssdp_socket(*args, **kwargs)
+    try:
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 4)
+    except OSError:
+        pass
+    return sock, src, tgt
+
+
+_ssdp_module.get_ssdp_socket = _patched_get_ssdp_socket
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -52,12 +70,7 @@ def dummy_mp3_data() -> bytes:
 
 @pytest.fixture()
 def dlna_http_port() -> int:
-    """Return a fixed port for the dlna-stream HTTP server.
-
-    Using a known port avoids the 'port=0' problem where the device
-    description URL in SSDP advertisements contains port 0 during
-    device construction.
-    """
+    """Return a fixed port for the dlna-stream HTTP server."""
     return unused_port()
 
 
@@ -110,14 +123,10 @@ def stream_forwarder(fake_radio_url: str) -> StreamForwarder:
 
 
 @pytest.fixture()
-def dlna_device_class(
-    stream_forwarder: StreamForwarder,
-    dlna_http_port: int,
-) -> type:
+def dlna_device_class(stream_forwarder: StreamForwarder) -> type:
     """
     Create a MediaServerDevice subclass that sets up the forwarder
-    on construction. This is needed because UpnpServer creates the device
-    instance internally with a fixed constructor signature.
+    on construction.
     """
     udn = f"uuid:{uuid4()}"
 
@@ -154,47 +163,31 @@ async def dlna_server(
     fake_radio_url: str,
     stream_forwarder: StreamForwarder,
     dlna_http_port: int,
-) -> AsyncIterator[UpnpServer]:
+) -> AsyncIterator[ServerHandle]:
     """
-    Start a fully-configured dlna-stream server, yield it, then
-    shut it down and cancel any active stream connections.
+    Start a fully-configured dlna-stream server using the same startup
+    logic as ``__main__.py`` (``start_server`` from ``server_lifecycle``),
+    yield the ``ServerHandle``, then shut everything down.
     """
-    server = UpnpServer(
-        dlna_device_class,
-        source=("127.0.0.1", 0),
+    handle = await start_server(
+        device_class=dlna_device_class,
+        local_ip="127.0.0.1",
+        http_bind="127.0.0.1",
         http_port=dlna_http_port,
-        options={
-            "ssdp_search_responder_options": {
-                "ssdp_search_responder_always_rootdevice": True,
-            },
-        },
+        stream_url=fake_radio_url,
+        stream_title=DUMMY_STREAM_TITLE,
+        stream_mime_type=DUMMY_MIME,
+        forwarder=stream_forwarder,
     )
 
-    await server.async_start()
-
     try:
-        # The actual port should match dlna_http_port since we specified it
-        sockname = server._site._server.sockets[0].getsockname()  # type: ignore
-        actual_port = sockname[1]
-        base_uri = f"http://127.0.0.1:{actual_port}"
-
-        # Configure services with stream info
-        device = server._device
-        assert device is not None
-        device.configure_services(
-            stream_url=fake_radio_url,
-            stream_title=DUMMY_STREAM_TITLE,
-            stream_mime_type=DUMMY_MIME,
-            host_url=base_uri,
-        )
-
-        yield server
+        yield handle
     finally:
         stream_forwarder.cancel_all()
-        await server.async_stop()
+        await handle.stop()
 
 
 @pytest.fixture()
-def dlna_base_uri(dlna_server: UpnpServer, dlna_http_port: int) -> str:
+def dlna_base_uri(dlna_server: ServerHandle, dlna_http_port: int) -> str:
     """Return the base URI of the dlna-stream server."""
-    return f"http://127.0.0.1:{dlna_http_port}"
+    return f"http://127.0.0.1:{dlna_server.port}"

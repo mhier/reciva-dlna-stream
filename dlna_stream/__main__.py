@@ -10,13 +10,36 @@ import argparse
 import asyncio
 import logging
 import signal
+import socket
 import sys
+from functools import partial
+from typing import cast
 from uuid import uuid4
-
-from async_upnp_client.server import UpnpServer
 
 from .forwarder import StreamForwarder
 from .server import MediaServerDevice
+from .server_lifecycle import ServerHandle, start_server
+
+# ---------------------------------------------------------------------------
+# Monkey-patch: increase SSDP multicast TTL from 2 to 4
+#
+# The UPnP Device Architecture v2.0 (section 1.2.2) mandates a TTL of 4 for
+# SSDP multicast messages. The library hard-codes 2.
+# ---------------------------------------------------------------------------
+import async_upnp_client.ssdp as _ssdp_module
+_orig_get_ssdp_socket = _ssdp_module.get_ssdp_socket
+
+
+def _patched_get_ssdp_socket(*args, **kwargs):
+    sock, src, tgt = _orig_get_ssdp_socket(*args, **kwargs)
+    try:
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 4)
+    except OSError:
+        pass
+    return sock, src, tgt
+
+
+_ssdp_module.get_ssdp_socket = _patched_get_ssdp_socket
 
 _LOGGER = logging.getLogger("dlna_stream")
 
@@ -70,7 +93,17 @@ async def async_main(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
-    _LOGGER.info("Local IP: %s", local_ip)
+    _LOGGER.info("=" * 50)
+    _LOGGER.info("dlna-stream starting up")
+    _LOGGER.info("Local IP (detected): %s", local_ip)
+    _LOGGER.info("Bind IP (from args): %s", args.bind_ip)
+
+    # If --bind-ip is 0.0.0.0, we still need a concrete IP for SSDP source
+    # and device XML URLs. Keep using the detected local_ip for those,
+    # but use bind_ip for the HTTP server socket.
+    http_bind = args.bind_ip or "0.0.0.0"
+    _LOGGER.info("HTTP server binding to: %s", http_bind)
+    _LOGGER.info("SSDP source IP: %s", local_ip)
 
     # Create stream forwarder
     forwarder = StreamForwarder(
@@ -81,45 +114,32 @@ async def async_main(args: argparse.Namespace) -> None:
     # Build server device class with a unique UDN and custom name
     device_class = _make_device_class(args.name, forwarder)
 
-    # Determine port
     http_port = args.port or 0
 
-    # Create and start UPnP server (includes HTTP server, SSDP, etc.)
-    source = (local_ip, 0)
-    server = UpnpServer(
-        device_class,
-        source=source,
+    # Start everything with correct port handling
+    stopper = await start_server(
+        device_class=device_class,
+        local_ip=local_ip,
+        http_bind=http_bind,
         http_port=http_port,
-        options={
-            "ssdp_search_responder_options": {
-                "ssdp_search_responder_always_rootdevice": True,
-            },
-        },
-    )
-
-    await server.async_start()
-
-    # Get actual port (in case of auto-assign)
-    assert server._site is not None
-    actual_port = server._site._server.sockets[0].getsockname()[1]
-    base_uri = f"http://{local_ip}:{actual_port}"
-
-    # Configure services with stream details
-    device = server._device
-    assert device is not None
-    device.configure_services(
         stream_url=args.stream_url,
         stream_title=args.name,
         stream_mime_type=args.mime_type,
-        host_url=base_uri,
+        forwarder=forwarder,
     )
+    base_uri = f"http://{local_ip}:{stopper.port}"
 
+    _LOGGER.info("=" * 50)
     _LOGGER.info(
         "DLNA server started: '%s' at %s",
         args.name,
         base_uri,
     )
+    _LOGGER.info("Device XML: %s/device.xml", base_uri)
     _LOGGER.info("Stream URL: %s", args.stream_url)
+    _LOGGER.info("SSDP advertisements being sent every ~30s")
+    _LOGGER.info("Waiting for DLNA clients on the network...")
+    _LOGGER.info("=" * 50)
     _LOGGER.info("Press Ctrl+C to stop")
 
     # Wait for shutdown
@@ -139,15 +159,17 @@ async def async_main(args: argparse.Namespace) -> None:
     await stop_event.wait()
 
     # Cleanup
-    forwarder.cancel_all()
-    await server.async_stop()
-    _LOGGER.info("Server stopped")
+    await stopper.stop()
+
+
+# ---------------------------------------------------------------------------
+# Local IP detection
+# ---------------------------------------------------------------------------
 
 
 def _get_local_ip() -> str | None:
     """Get the local IP address of the machine."""
     try:
-        import socket
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("8.8.8.8", 80))
             return s.getsockname()[0]
@@ -155,11 +177,15 @@ def _get_local_ip() -> str | None:
         pass
 
     try:
-        import socket
         hostname = socket.gethostname()
         return socket.gethostbyname(hostname)
     except OSError:
         return None
+
+
+# ---------------------------------------------------------------------------
+# Device class factory
+# ---------------------------------------------------------------------------
 
 
 def _make_device_class(friendly_name: str, forwarder: StreamForwarder) -> type:
@@ -193,6 +219,11 @@ def _make_device_class(friendly_name: str, forwarder: StreamForwarder) -> type:
     return CustomMediaServerDevice
 
 
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
+
+
 def main() -> None:
     """Main entry point."""
     parser = _build_arg_parser()
@@ -206,8 +237,11 @@ def main() -> None:
         datefmt="%H:%M:%S",
     )
 
-    # Reduce noise from libraries
-    logging.getLogger("async_upnp_client").setLevel(logging.WARNING)
+    # Reduce noise from libraries, but enable SSDP/UPnP traffic logging in verbose mode
+    if args.verbose:
+        logging.getLogger("async_upnp_client").setLevel(logging.DEBUG)
+    else:
+        logging.getLogger("async_upnp_client").setLevel(logging.WARNING)
     logging.getLogger("aiohttp").setLevel(logging.WARNING)
 
     try:
