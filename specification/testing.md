@@ -18,7 +18,7 @@ A minimal HTTP server that serves dummy MP3 data. Serves:
 Creates a `StreamForwarder` pointing at the fake radio URL.
 
 ### `dlna_server` (async fixture)
-Uses `start_server()` (same as production) to start the full server with the stream forwarder. Yields a `ServerHandle`.
+Uses `start_server()` (same as production) to start the full server with the stream forwarder. The server lifecycle starts the ring buffer background task. Yields a `ServerHandle`.
 
 ### `dlna_base_uri`
 The base URI of the running server (e.g. `http://127.0.0.1:12345`).
@@ -29,7 +29,7 @@ The base URI of the running server (e.g. `http://127.0.0.1:12345`).
 Full integration test:
 1. Discover the DMS via SSDP
 2. Browse ContentDirectory → get stream URL
-3. Fetch stream data via HTTP
+3. Fetch stream data via HTTP (200 OK, from ring buffer)
 4. Verify data matches dummy MP3 input
 
 ### `test_stream_stops_when_no_clients`
@@ -45,7 +45,7 @@ Test BrowseMetadata on root container:
 3. Verify container title, class, childCount
 
 ### `test_range_request`
-Test range request for the main body:
+Test range request for the main body (served from ring buffer):
 1. Send `Range: bytes=0-16383` to /stream
 2. Verify 206 status, Content-Range, Content-Length, Accept-Ranges
 3. Read data, verify it matches dummy MP3
@@ -66,12 +66,12 @@ Verify device description XML:
 
 ### `test_ssdp_location_port`
 Verify SSDP LOCATION URL has correct port:
-1. Join SSDP multicast group
-2. Listen for NOTIFY packets
-3. Find one matching our device
-4. Verify LOCATION URL matches expected `http://127.0.0.1:{port}/device.xml`
+1. Send M-SEARCH query via UDP multicast
+2. Listen for search responses
+3. Find one matching our device's LOCATION URL
+4. Verify URL matches expected `http://127.0.0.1:{port}/device.xml`
 
-Note: This test is timing-dependent (SSDP packets sent every ~30s) and may flake if the 5-second window doesn't catch an advertisement.
+Note: This test uses M-SEARCH (active query) instead of waiting for NOTIFY (passive, every ~30s). It is not timing-dependent.
 
 ## Fixture Lifecycle
-Each test gets a fresh server instance (new port, new forwarder, new UPnP device with unique UDN). The fixture scope is `function` by default (pytest-asyncio default test loop scope).
+Each test gets a fresh server instance (new port, new forwarder, new UPnP device with unique UDN). The buffer background task starts with the server and is stopped during teardown. Fixture scope is `function` by default (pytest-asyncio default test loop scope).

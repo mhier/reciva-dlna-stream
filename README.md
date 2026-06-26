@@ -9,6 +9,14 @@ compatible with DLNA clients that don't support playlist/radio streaming.
 The remote stream is only fetched when a DLNA client requests it, minimising
 internet traffic and CPU usage when no client is connected.
 
+Note: This project has been shamelessly vibe coded. I needed a quick solution to get
+my old Reciva radio working again (Sharpfin did not work for me, I somehow locked me
+out permanently). I hence do not claim this is my work, and I am not proud of it. I am
+also using it to try various techiques of improved vibe coding.
+
+If you don't like this or if you are looking for a stable piece of software, stay away
+from it :-)
+
 ## Usage
 
 ```bash

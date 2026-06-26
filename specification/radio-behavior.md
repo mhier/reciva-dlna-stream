@@ -29,9 +29,25 @@ This requests the **last 129 bytes** of the declared file size. The radio does t
 
 If the end-of-file request fails or hangs, the radio gives up, reports the stream as unavailable, and retries the entire cycle.
 
+## Stream Playback Sequence
+Once probing succeeds, the radio plays the stream by requesting sequential ranges:
+
+```
+GET /stream HTTP/1.1
+Range: bytes=0-262143           (first 256 KB)
+
+GET /stream HTTP/1.1
+Range: bytes=262144-393215      (next ~128 KB)
+
+GET /stream HTTP/1.1
+Range: bytes=262144-393215      (same range again, if first attempt failed)
+```
+
+Each range request at position N must return exactly the data the radio expects at that position. If the data doesn't match (e.g. because a new connection to the Icecast source returns different data at position 0), the radio disconnects and retries.
+
 ### What the Radio Expects
 The radio expects a proper MP3 file with:
-- MPEG audio frames starting from byte 0
+- Valid MPEG audio frames at each byte position (consistent across requests)
 - An ID3v1.1 tag (128 bytes) at position `Content-Length - 128`
 - The ID3 tag starts with the magic bytes `TAG` (0x54 0x41 0x47)
 - Valid `Content-Range` headers on 206 responses
@@ -41,7 +57,7 @@ The radio expects a proper MP3 file with:
 - Pure streams with no Content-Length
 - HTTP redirects to external URLs
 - Non-seekable resources (no Accept-Ranges or Accept-Ranges: none)
-- 200 OK responses to range requests (it expects 206 Partial Content)
+- Inconsistent data at the same byte position across different connections
 
 ## Implementation Requirements
 To satisfy a Reciva radio, the server must:
@@ -50,11 +66,12 @@ To satisfy a Reciva radio, the server must:
 3. **Respond 206 Partial Content** to Range requests
 4. Serve valid bytes for the **last 129 bytes** of the declared file (a valid ID3v1.1 tag)
 5. Serve valid MP3 data for the **first 128 KB** of the declared file
-6. Respond to other requests with the expected HTTP status codes and headers
+6. Serve **consistent data** at byte position N regardless of when it's requested (requires buffering the live stream)
+7. Respond to other requests with the expected HTTP status codes and headers
 
 ## Retry Behavior
-If the probing fails:
+If any part of the probing or playback fails:
 1. The radio waits ~4-5 seconds
 2. Logs `contentDidPlay(0)` with a dismiss message
-3. Retries the entire discovery + probe cycle
+3. Retries the entire discovery + probe + play cycle
 4. This continues indefinitely (every ~10 seconds)
