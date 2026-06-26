@@ -7,13 +7,13 @@ This file documents how the `dlna-stream` project has been developed in this ses
 ### Session Flow
 1. **Understand the problem**: Start by reading the existing codebase, project memory, and any user-provided logs
 2. **Save key context to memory**: Non-obvious findings, radio behavior, architecture decisions → saved to `memory/project.md`
-3. **Implement iteratively**: Make changes, run tests, fix issues
-4. **Update specifications**: After each significant change, update the `specification/*.md` files to reflect the current design
+3. **Update specifications**: Before each significant change, update the `specification/*.md` files to reflect the new design
+4. **Implement iteratively**: Write tests according to update specifications, make changes to the implementation, run tests, fix issues
 5. **Save to memory before session end**: Important project context must not be lost
 
 ### Spec-First for Reimplementation
 - The `specification/` directory is the source of truth for how the server works
-- After any implementation change, the corresponding spec files must be updated
+- Befre any implementation change, the corresponding spec files must be updated
 - Specs should contain enough detail to reimplement the server from scratch
 
 ### User's Communication Style

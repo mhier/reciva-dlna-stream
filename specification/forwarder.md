@@ -1,7 +1,7 @@
 # StreamForwarder & StreamBuffer Design
 
 ## Purpose
-The `StreamForwarder` handles HTTP requests to `/stream`. The `StreamBuffer` provides a persistent ring buffer that continuously reads from the remote Icecast stream. Together they present the live stream as a seekable MP3 file to DLNA clients.
+The `StreamForwarder` handles HTTP requests to `/stream`. The `StreamBuffer` provides a persistent ring buffer that continuously reads from the remote Icecast stream. Together they present the live stream as a seekable MP3 file to DLNA clients, specifically Reciva-based internet radios.
 
 ## Problem
 The Reciva radio treats the stream as a file and requests ranges at increasing byte positions (`bytes=0-262143`, then `bytes=262144-393215`, etc.). Each request for position N must return the exact bytes the radio expects there. A live stream cannot satisfy this with per-request connections — the stream moves on between requests.

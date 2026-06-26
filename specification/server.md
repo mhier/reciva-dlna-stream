@@ -75,7 +75,9 @@ The stream URL returned is always `{host_url}/stream`.
 Standard ContentDirectory actions, return empty/default values.
 
 #### `Search(ContainerID, ...)`
-Not implemented. Returns empty result.
+Not implemented. Returns empty result (`NumberReturned=0, TotalMatches=0`).
+
+## Service: `ConnectionManagerService`
 
 ### DIDL-Lite XML Structure
 

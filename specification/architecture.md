@@ -1,9 +1,11 @@
 # Architecture Overview
 
 ## Purpose
-`dlna-stream` is a DLNA Media Server that makes a live internet radio stream (e.g. Icecast/Shoutcast MP3) discoverable and playable by UPnP/DLNA clients, specifically Reciva-based internet radios.
+`dlna-stream` is a DLNA Media Server that makes a live internet radio stream (e.g. Icecast/Shoutcast MP3) discoverable and playable by UPnP/DLNA clients.
 
-The core challenge: DLNA clients treat streams as **files with a fixed size**. They probe the file size via HTTP Range requests before playing. A live stream has no fixed size, so the server must fake it convincingly enough for the client to start playing.
+**This project is highly tailored to serve a Reciva-based internet radio.** Every significant design decision is driven by how Reciva radios (common in older internet radios from Coby, Sangean, and others) behave when accessing a DLNA Media Server. The server may work with other DLNA clients, but it is tested and tuned specifically for Reciva.
+
+The core challenge: Reciva radios treat streams as **files with a fixed size**. They probe the file size via HTTP Range requests before playing. A live stream has no fixed size, so the server must fake it convincingly enough for the client to start playing.
 
 ## High-Level Architecture
 
@@ -46,24 +48,24 @@ The core challenge: DLNA clients treat streams as **files with a fixed size**. T
 ## Key Design Decisions
 
 ### 1. Fake Content-Length
-The server advertises a fake `Content-Length` (~1.4 GB = 24 hours of 128 kbps MP3). This satisfies clients that check Content-Length before accepting a stream.
+The server advertises a fake `Content-Length` (~1.4 GB = 24 hours of 128 kbps MP3). Reciva radios check `Content-Length` before accepting a stream — if absent or too small, they reject it immediately.
 
 ### 2. Persistent Ring Buffer
-A background task (`StreamBuffer`) continuously reads the remote Icecast stream into a `bytearray` buffer (up to 512 MB). All HTTP requests (range or full) read from this buffer at the correct offset. This ensures that:
+A background task (`StreamBuffer`) continuously reads the remote Icecast stream into a `bytearray` buffer (up to 512 MB). All HTTP requests (range or full) read from this buffer at the correct offset. This is necessary because Reciva radios request sequential byte ranges in separate TCP connections:
 
-- Byte position N always returns the **same data** regardless of when it's requested
-- The radio can request `bytes=262144-393215` and get the same content it got at position 262144 from the first request
-- Multiple concurrent clients see consistent data
+- `bytes=0-262143` (first 256 KB)
+- `bytes=262144-393215` (next ~128 KB)
+- etc.
 
 Without the ring buffer, each range request opened a new Icecast connection — but the stream is live, so "byte 0" is different every time you connect. The radio got garbage at position 262144 and disconnected.
 
 ### 3. Hybrid Range Handling
-DLNA clients (especially Reciva radios) probe the file size by:
+Reciva radios probe the declared file size in **two parallel HTTP requests** before they start playing:
 1. Requesting `Range: bytes=0-131071` (first 128 KB) — served from the ring buffer
 2. Requesting `Range: bytes=<end-128>-<end>` (last 129 bytes) — served from synthetic ID3v1.1 tag
 
 ### 4. Synthetic ID3v1.1 Footer
-The last 129 bytes of a real MP3 file typically contain:
+The Reciva radar specifically validates the last 129 bytes of the declared file to confirm it is a real MP3. The last 129 bytes of a real MP3 file typically contain:
 - 1 byte: end of the last MP3 audio frame
 - 128 bytes: ID3v1.1 tag (metadata)
 
@@ -85,7 +87,7 @@ dlna_stream/
 tests/
 ├── __init__.py
 ├── conftest.py          # Test fixtures
-└── test_integration.py  # Integration tests (7 tests)
+└── test_integration.py  # Integration tests (14 tests)
 
 specification/
 ├── architecture.md      # This file

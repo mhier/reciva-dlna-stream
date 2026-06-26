@@ -1,6 +1,14 @@
 # dlna-stream
 
-A DLNA Media Server that forwards an internet radio stream to DLNA clients.
+A DLNA Media Server **highly tailored to serve a Reciva-based internet radio**.
+
+This project exists because Reciva radios (common in older internet radios from
+Coby, Sangean, and other brands) treat streams as **files**. They probe the HTTP
+server with Range requests, validate the file size via the last 129 bytes (ID3v1
+tag), and abort if the content at a given byte position changes between requests.
+
+The entire design — ring buffer, synthetic ID3v1 footer, fake Content-Length,
+hybrid Range handling — is built specifically around Reciva radio behavior.
 
 Unlike most DLNA radio solutions, this server does **not** serve an `.m3u` playlist file.
 Instead, it presents the stream as a regular audio file served via HTTP, making it
