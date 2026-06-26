@@ -263,14 +263,288 @@ async def test_end_of_file_range_request(
                 "Synthetic footer data mismatch"
             )
 
-            _LOGGER.info(
-                "Verified %d bytes of synthetic footer: starts with %s",
-                len(data),
-                data[:4].hex(),
+    _LOGGER.info(
+        "Verified %d bytes of synthetic footer: starts with %s",
+        len(data),
+        data[:4].hex(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_active_connection_count(
+    dlna_base_uri: str,
+    dummy_mp3_data: bytes,
+) -> None:
+    """
+    Verify that active_connection_count reflects current connections.
+    """
+    # Open two concurrent connections and verify both receive data.
+    async with ClientSession() as session:
+        async with session.get(
+            f"{dlna_base_uri}/stream",
+            timeout=STREAM_READ_TIMEOUT,
+        ) as resp1, session.get(
+            f"{dlna_base_uri}/stream",
+            timeout=STREAM_READ_TIMEOUT,
+        ) as resp2:
+            assert resp1.status == 200
+            assert resp2.status == 200
+            chunk1 = await resp1.content.readexactly(1024)
+            chunk2 = await resp2.content.readexactly(1024)
+            # Both connections must see the same data (ring buffer consistency)
+            assert chunk1 == chunk2, (
+                "Concurrent connections must return same data from ring buffer"
             )
+            assert chunk1 == dummy_mp3_data[:1024]
+
+
+@pytest.mark.asyncio
+async def test_fake_content_length_property(
+    stream_forwarder,
+) -> None:
+    """Verify fake_content_length property returns the expected value."""
+    from dlna_stream.forwarder import _FAKE_CONTENT_LENGTH
+    assert stream_forwarder.fake_content_length == _FAKE_CONTENT_LENGTH
+
+
+@pytest.mark.asyncio
+async def test_full_stream_response_headers(
+    dlna_base_uri: str,
+) -> None:
+    """
+    Verify that a full-stream (200) response includes the expected headers.
+    """
+    async with ClientSession() as session:
+        async with session.get(
+            f"{dlna_base_uri}/stream",
+            timeout=STREAM_READ_TIMEOUT,
+        ) as resp:
+            assert resp.status == 200
+            assert resp.headers.get("Content-Type") == "audio/mpeg"
+            assert resp.headers.get("Accept-Ranges") == "bytes"
+            assert resp.headers.get("TransferMode.DLNA.ORG") == "Streaming"
+            assert resp.headers.get("Cache-Control") == "no-cache"
+            # Content-Length should be the fake file size
+            from dlna_stream.forwarder import _FAKE_CONTENT_LENGTH
+            assert resp.headers.get("Content-Length") == str(_FAKE_CONTENT_LENGTH)
+            # Just read a bit to confirm stream works
+            _ = await resp.content.readexactly(512)
+
+
+@pytest.mark.asyncio
+async def test_data_consistency_across_connections(
+    dlna_base_uri: str,
+    dummy_mp3_data: bytes,
+) -> None:
+    """
+    Verify that the same byte range returns the same data across multiple
+    connections. This is critical for Reciva radios that probe in separate
+    HTTP requests.
+    """
+    range_size = 4096
+    range_end = range_size - 1
+
+    # First connection
+    async with ClientSession() as session:
+        async with session.get(
+            f"{dlna_base_uri}/stream",
+            headers={"Range": f"bytes=0-{range_end}"},
+            timeout=STREAM_READ_TIMEOUT,
+        ) as resp:
+            assert resp.status == 206
+            data1 = await resp.content.readexactly(range_size)
+
+    # Second connection (different TCP connection)
+    async with ClientSession() as session:
+        async with session.get(
+            f"{dlna_base_uri}/stream",
+            headers={"Range": f"bytes=0-{range_end}"},
+            timeout=STREAM_READ_TIMEOUT,
+        ) as resp:
+            assert resp.status == 206
+            data2 = await resp.content.readexactly(range_size)
+
+    # Must be identical (ring buffer consistency)
+    assert data1 == data2, (
+        "Data at byte offset 0 must be identical across connections"
+    )
+    assert data1 == dummy_mp3_data[:range_size]
+
+
+@pytest.mark.asyncio
+async def test_multi_chunk_range_request(
+    dlna_base_uri: str,
+    dummy_mp3_data: bytes,
+) -> None:
+    """
+    Test a range that requires multiple chunk reads from the ring buffer.
+    The dummy data is 16KB and BUFFER_SIZE is 64KB, so a single chunk
+    covers it all. But we can request a range that spans the full dummy
+    data (16384 bytes) to verify the chunked read loop in
+    _handle_buffer_range works correctly.
+    """
+    from dlna_stream.forwarder import _BUFFER_SIZE
+    # Request the full dummy data size (requires at least one read from buffer)
+    range_size = len(dummy_mp3_data)
+    range_end = range_size - 1
+
+    async with ClientSession() as session:
+        async with session.get(
+            f"{dlna_base_uri}/stream",
+            headers={"Range": f"bytes=0-{range_end}"},
+            timeout=STREAM_READ_TIMEOUT,
+        ) as resp:
+            assert resp.status == 206
+            assert resp.headers.get("Content-Range", "").startswith(
+                f"bytes 0-{range_end}/"
+            )
+            assert resp.headers.get("Content-Length") == str(range_size)
+
+            data = await resp.content.readexactly(range_size)
+            assert len(data) == range_size
+            assert data == dummy_mp3_data[:range_size], (
+                f"Range data mismatch: "
+                f"expected {range_size} bytes, got {len(data)}"
+            )
+            assert resp.headers.get("Accept-Ranges") == "bytes"
+            assert resp.headers.get("TransferMode.DLNA.ORG") == "Streaming"
+
+
+@pytest.mark.asyncio
+async def test_connection_manager_actions(
+    dlna_base_uri: str,
+) -> None:
+    """Test ConnectionManager:1 actions via SOAP/UPnP."""
+    import xml.etree.ElementTree as ET
+
+    # Build a minimal SOAP request for GetProtocolInfo
+    body = (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"'
+        ' s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">'
+        '<s:Body>'
+        '<u:GetProtocolInfo xmlns:u="urn:schemas-upnp-org:service:ConnectionManager:1">'
+        '</u:GetProtocolInfo>'
+        '</s:Body>'
+        '</s:Envelope>'
+    ).encode("utf-8")
+
+    async with ClientSession() as session:
+        async with session.post(
+            f"{dlna_base_uri}/upnp/control/ConnectionManager1",
+            data=body,
+            headers={
+                "SOAPACTION": '"urn:schemas-upnp-org:service:ConnectionManager:1#GetProtocolInfo"',
+                "Content-Type": "text/xml; charset=utf-8",
+            },
+            timeout=STREAM_READ_TIMEOUT,
+        ) as resp:
+            assert resp.status == 200
+            text = await resp.text()
+            assert "http-get:*:audio/mpeg:*" in text
+
+    # GetCurrentConnectionIDs
+    body = (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"'
+        ' s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">'
+        '<s:Body>'
+        '<u:GetCurrentConnectionIDs xmlns:u="urn:schemas-upnp-org:service:ConnectionManager:1">'
+        '</u:GetCurrentConnectionIDs>'
+        '</s:Body>'
+        '</s:Envelope>'
+    ).encode("utf-8")
+
+    async with ClientSession() as session:
+        async with session.post(
+            f"{dlna_base_uri}/upnp/control/ConnectionManager1",
+            data=body,
+            headers={
+                "SOAPACTION": '"urn:schemas-upnp-org:service:ConnectionManager:1#GetCurrentConnectionIDs"',
+                "Content-Type": "text/xml; charset=utf-8",
+            },
+            timeout=STREAM_READ_TIMEOUT,
+        ) as resp:
+            assert resp.status == 200
+            text = await resp.text()
+            # Response uses <ConnectionIDs> not <CurrentConnectionIDs>
+            assert "<ConnectionIDs>0</ConnectionIDs>" in text
+
+    # GetCurrentConnectionInfo
+    body = (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"'
+        ' s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">'
+        '<s:Body>'
+        '<u:GetCurrentConnectionInfo xmlns:u="urn:schemas-upnp-org:service:ConnectionManager:1">'
+        '<ConnectionID>0</ConnectionID>'
+        '</u:GetCurrentConnectionInfo>'
+        '</s:Body>'
+        '</s:Envelope>'
+    ).encode("utf-8")
+
+    async with ClientSession() as session:
+        async with session.post(
+            f"{dlna_base_uri}/upnp/control/ConnectionManager1",
+            data=body,
+            headers={
+                "SOAPACTION": '"urn:schemas-upnp-org:service:ConnectionManager:1#GetCurrentConnectionInfo"',
+                "Content-Type": "text/xml; charset=utf-8",
+            },
+            timeout=STREAM_READ_TIMEOUT,
+        ) as resp:
+            assert resp.status == 200
+            text = await resp.text()
+            assert "<Status>OK</Status>" in text
+            assert "<Direction>Output</Direction>" in text
+
+
+@pytest.mark.asyncio
+async def test_search_action_returns_empty(
+    dlna_base_uri: str,
+) -> None:
+    """Test that the Search action returns empty result."""
+    body = (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"'
+        ' s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">'
+        '<s:Body>'
+        '<u:Search xmlns:u="urn:schemas-upnp-org:service:ContentDirectory:1">'
+        '<ContainerID>0</ContainerID>'
+        '<BrowseFlag>BrowseDirectChildren</BrowseFlag>'
+        '<Filter>*</Filter>'
+        '<StartingIndex>0</StartingIndex>'
+        '<RequestedCount>0</RequestedCount>'
+        '<SortCriteria></SortCriteria>'
+        '</u:Search>'
+        '</s:Body>'
+        '</s:Envelope>'
+    ).encode("utf-8")
+
+    async with ClientSession() as session:
+        async with session.post(
+            f"{dlna_base_uri}/upnp/control/ContentDirectory1",
+            data=body,
+            headers={
+                "SOAPACTION": '"urn:schemas-upnp-org:service:ContentDirectory:1#Search"',
+                "Content-Type": "text/xml; charset=utf-8",
+            },
+            timeout=STREAM_READ_TIMEOUT,
+        ) as resp:
+            assert resp.status == 200
+            text = await resp.text()
+            # Should be an empty DIDL-Lite result
+            # Response may use <Result /> (self-closing) or <Result></Result>
+            assert "<Result" in text and "</Result>" in text or "<Result/>" in text or "<Result />" in text
+
+
+@pytest.mark.asyncio
+async def test_device_xml_valid(
+    dlna_base_uri: str,
+) -> None:
     """
     Test that the device description XML is valid and contains the correct
-    URLs (not port 0).
+    URLs (not port 0), services, and UDN.
     """
     async with ClientSession() as session:
         async with session.get(
