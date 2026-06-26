@@ -23,10 +23,11 @@ The core challenge: Reciva radios treat streams as **files with a fixed size**. 
                                      │  └───────┬──────────┘ │
                                      │          │            │
                                      │          ▼            │
-                                     │  ┌──────────────────┐ │
-                                     │  │ StreamForwarder  │ │
-                                     │  │ (HTTP handlers)  │ │
-                                     │  └──────────────────┘ │
+                                      │  ┌──────────────────┐ │
+                                      │  │ StreamForwarder  │ │
+                                      │  │ (per stream)     │ │
+                                      │  │ /stream/{id}     │ │
+                                      │  └──────────────────┘ │
                                      │                      │
                                      │  ┌──────────────────┐ │
                                      │  │ ContentDirectory │ │
@@ -82,12 +83,13 @@ reciva_dlna_stream/
 ├── __main__.py          # CLI entry point, arg parsing
 ├── forwarder.py         # StreamForwarder + StreamBuffer
 ├── server.py            # UPnP device + service definitions
-└── server_lifecycle.py  # Server startup/shutdown orchestration
+├── server_lifecycle.py  # Server startup/shutdown orchestration
+└── stream_config.py     # Config file parsing (multi-stream)
 
 tests/
 ├── __init__.py
-├── conftest.py          # Test fixtures
-└── test_integration.py  # Integration tests (14 tests)
+├── conftest.py          # Test fixtures (single + multi-stream)
+└── test_integration.py  # Integration tests (22 tests)
 
 specification/
 ├── architecture.md      # This file

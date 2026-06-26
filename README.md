@@ -27,16 +27,43 @@ from it :-)
 
 ## Usage
 
+### Single stream (legacy CLI arguments)
+
 ```bash
 reciva-dlna-stream --stream-url "https://example.com/radio-stream.mp3"
 ```
+
+### Multiple streams (config file)
+
+```bash
+# See example-config.json for the format
+reciva-dlna-stream --config example-config.json
+```
+
+Config file format (`example-config.json`):
+
+```json
+{
+    "streams": [
+        {
+            "url": "https://st01.sslstream.dlf.de/dlf/01/128/mp3/stream.mp3",
+            "name": "Deutschlandfunk",
+            "mime_type": "audio/mpeg"
+        }
+    ]
+}
+```
+
+Each stream is exposed at `/stream/0`, `/stream/1`, etc. in the ContentDirectory.
+In single-stream mode, the legacy alias `/stream` also works.
 
 ### Options
 
 | Option | Description |
 |--------|-------------|
-| `--stream-url` | URL of the internet radio stream (required) |
+| `--stream-url` | URL of the internet radio stream (required unless `--config` is given) |
 | `--name` | Friendly name of the DLNA server (default: "Internet Radio Stream") |
+| `--config` | Path to JSON config file listing multiple streams |
 | `--port` | HTTP server port (default: 0 = auto-assign) |
 | `--mime-type` | MIME type of the stream (default: audio/mpeg) |
 | `--bind-ip` | IP address to bind the HTTP server to (default: 0.0.0.0) |

@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import socket
 from functools import partial
-from typing import cast
+from typing import Sequence, cast
 
 from aiohttp.web import Application, AppRunner, TCPSite
 
@@ -28,6 +28,8 @@ from async_upnp_client.server import (
     unsubscribe_handler,
 )
 
+from .stream_config import StreamConfig
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -40,18 +42,19 @@ class ServerHandle:
         search_responder: SsdpSearchResponder,
         advertisement_announcer: SsdpAdvertisementAnnouncer,
         runner: AppRunner,
-        forwarder: object,
+        forwarders: Sequence[object],
     ) -> None:
         self.port = port
         self._search_responder = search_responder
         self._advertisement_announcer = advertisement_announcer
         self._runner = runner
-        self._forwarder = forwarder
+        self._forwarders = list(forwarders)
 
     async def stop(self) -> None:
-        """Stop stream buffer, SSDP, then HTTP."""
-        if hasattr(self._forwarder, 'stop_buffer'):
-            await self._forwarder.stop_buffer()
+        """Stop all stream buffers, SSDP, then HTTP."""
+        for fwd in self._forwarders:
+            if hasattr(fwd, 'stop_buffer'):
+                await fwd.stop_buffer()
         await self._advertisement_announcer.async_stop()
         await self._search_responder.async_stop()
         await self._runner.cleanup()
@@ -63,10 +66,8 @@ async def start_server(
     local_ip: str,
     http_bind: str,
     http_port: int,
-    stream_url: str,
-    stream_title: str,
-    stream_mime_type: str,
-    forwarder: object,
+    streams: list[StreamConfig],
+    forwarders: Sequence[object],
 ) -> ServerHandle:
     """Start HTTP + SSDP, ensuring SSDP LOCATION has the correct port.
 
@@ -105,12 +106,7 @@ async def start_server(
     device = device_class(requester, base_uri)
 
     # Configure services with stream details
-    device.configure_services(
-        stream_url=stream_url,
-        stream_title=stream_title,
-        stream_mime_type=stream_mime_type,
-        host_url=base_uri,
-    )
+    device.configure_services(streams=streams, host_url=base_uri)
 
     # Build the aiohttp app with all UPnP routes
     app = Application()
@@ -164,14 +160,15 @@ async def start_server(
     await search_responder.async_start()
     await advertisement_announcer.async_start()
 
-    # Step 5: Start the buffer background reader
-    if hasattr(forwarder, 'start_buffer'):
-        await forwarder.start_buffer()
+    # Step 5: Start all buffer background readers
+    for fwd in forwarders:
+        if hasattr(fwd, 'start_buffer'):
+            await fwd.start_buffer()
 
     return ServerHandle(
         port=actual_port,
         search_responder=search_responder,
         advertisement_announcer=advertisement_announcer,
         runner=runner,
-        forwarder=forwarder,
+        forwarders=forwarders,
     )

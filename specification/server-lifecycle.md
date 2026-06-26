@@ -8,14 +8,12 @@ Orchestrate the correct startup order of the HTTP server, stream buffer, and SSD
 ### Signature
 ```python
 async def start_server(
-    device_class: type,        # MediaServerDevice subclass
-    local_ip: str,             # Detected local IP
-    http_bind: str,            # Bind address (e.g. "0.0.0.0")
-    http_port: int,            # Port (0 = auto-assign)
-    stream_url: str,           # Remote stream URL
-    stream_title: str,         # Friendly name
-    stream_mime_type: str,     # MIME type
-    forwarder: object,         # StreamForwarder instance
+    device_class: type,              # MediaServerDevice subclass
+    local_ip: str,                   # Detected local IP
+    http_bind: str,                  # Bind address (e.g. "0.0.0.0")
+    http_port: int,                  # Port (0 = auto-assign)
+    streams: list[StreamConfig],     # List of stream configurations
+    forwarders: Sequence[object],    # One StreamForwarder per stream
 ) -> ServerHandle
 ```
 
@@ -53,11 +51,11 @@ async def start_server(
    ├── SsdpSearchResponder (responds to M-SEARCH)
    └── SsdpAdvertisementAnnouncer (sends NOTIFY every ~30s)
    
-5. Start Stream Buffer
-   │
-   └── forwarder.start_buffer() → background ring buffer task begins reading
-   
-6. Return ServerHandle(port, responder, announcer, runner, forwarder)
+ 5. Start Stream Buffers
+    │
+    └── for each forwarder: forwarder.start_buffer() → background ring buffer task begins reading
+
+ 6. Return ServerHandle(port, responder, announcer, runner, forwarders)
 ```
 
 ### Port Auto-Assignment Bug Fix
@@ -72,7 +70,7 @@ The issue with the upstream library: `UpnpServer.async_start()` calls `_create_d
 
 ### Attributes
 - `port: int` — The actual HTTP server port
-- `_forwarder` — StreamForwarder instance (for buffer lifecycle)
+- `_forwarders: list[object]` — All StreamForwarder instances (for buffer lifecycle)
 - `_search_responder` — SSDP search responder
 - `_advertisement_announcer` — SSDP advertisement announcer
 - `_runner` — aiohttp AppRunner
@@ -81,7 +79,7 @@ The issue with the upstream library: `UpnpServer.async_start()` calls `_create_d
 
 #### `async stop()`
 Shutdown sequence:
-1. Stop stream buffer (`forwarder.stop_buffer()`)
+1. Stop all stream buffers (for each forwarder: `forwarder.stop_buffer()`)
 2. Stop advertisement announcer (stop sending NOTIFY)
 3. Stop search responder (stop responding to M-SEARCH)
 4. Cleanup aiohttp AppRunner
@@ -91,20 +89,27 @@ Shutdown sequence:
 ### Argument Parser
 | Argument | Default | Description |
 |----------|---------|-------------|
-| `--stream-url` | (required) | URL of the internet radio stream |
-| `--name` | "Internet Radio Stream" | Friendly name |
+| `--stream-url` | — | URL of the internet radio stream (mutually exclusive with `--config`) |
+| `--name` | "Internet Radio Stream" | Friendly name (single-stream mode only) |
+| `--config` | — | Path to JSON config file listing streams |
 | `--port` | 0 (auto-assign) | HTTP server port |
-| `--mime-type` | "audio/mpeg" | Stream MIME type |
+| `--mime-type` | "audio/mpeg" | Stream MIME type (single-stream mode only) |
 | `--bind-ip` | "0.0.0.0" | HTTP bind address |
 | `--verbose` / `-v` | off | Enable debug logging |
 
 ### Flow
 1. Detect local IP (via UDP connect to 8.8.8.8:80 or gethostbyname fallback)
-2. Create `StreamForwarder` with the remote URL
-3. Create a custom `MediaServerDevice` subclass with unique UDN and friendly name
-4. Call `start_server()` with all parameters — this starts the HTTP server, SSDP, and ring buffer
-5. Wait for SIGINT/SIGTERM
-6. Call `ServerHandle.stop()` to cleanly shut down (buffer → SSDP → HTTP)
+2. If `--config` is given:
+   - Parse `load_config()` → list of `StreamConfig`
+   - Create one `StreamForwarder` per stream
+3. If `--stream-url` is given:
+   - Build a single `StreamConfig` with `--name` and `--mime-type`
+   - Create one `StreamForwarder`
+4. Create a custom `MediaServerDevice` subclass with unique UDN and friendly name
+5. Call `set_forwarders(forwarders)` on the device class constructor
+6. Call `start_server()` with all streams, forwarders, and parameters — this starts the HTTP server, SSDP, and all ring buffers
+7. Wait for SIGINT/SIGTERM
+8. Call `ServerHandle.stop()` to cleanly shut down (all buffers → SSDP → HTTP)
 
 ### SSDP TTL Monkey-Patch
 The `async_upnp_client` library hard-codes SSDP multicast TTL = 2, but UPnP Device Architecture v2.0 mandates TTL = 4. The monkey-patch in `__main__.py` overrides `get_ssdp_socket()` to set `IP_MULTICAST_TTL = 4` on the SSDP socket.

@@ -26,6 +26,7 @@ from async_upnp_client.server import (
 )
 
 from .forwarder import StreamForwarder
+from .stream_config import StreamConfig
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -51,19 +52,36 @@ def _build_didl_item(
     mime_type: str,
     protocol_info: str | None = None,
 ) -> str:
-    """Build a DIDL-Lite XML string for a single item."""
+    """Build a DIDL-Lite XML string for a single item (full document)."""
     if protocol_info is None:
         protocol_info = f"http-get:*:{mime_type}:*"
 
     return (
         f'<DIDL-Lite {_DIDL_XMLNS}>'
+        f'{_build_item_xml(item_id, parent_id, title, url, mime_type, protocol_info)}'
+        f'</DIDL-Lite>'
+    )
+
+
+def _build_item_xml(
+    item_id: str,
+    parent_id: str,
+    title: str,
+    url: str,
+    mime_type: str,
+    protocol_info: str | None = None,
+) -> str:
+    """Build the inner XML for a single item (without DIDL-Lite wrapper)."""
+    if protocol_info is None:
+        protocol_info = f"http-get:*:{mime_type}:*"
+
+    return (
         f'<item id="{item_id}" parentID="{parent_id}" restricted="true">'
         f'<dc:title>{_xml_escape(title)}</dc:title>'
         f'<upnp:class>object.item.audioItem.audioBroadcast</upnp:class>'
         f'<res protocolInfo="{_xml_escape(protocol_info)}"'
         f'>{_xml_escape(url)}</res>'
         f'</item>'
-        f'</DIDL-Lite>'
     )
 
 
@@ -100,15 +118,16 @@ def _xml_escape(text: str) -> str:
 # ContentDirectory service
 # ---------------------------------------------------------------------------
 
-# Item ID for our radio stream
-_ITEM_ID = "0"
+# Root container constants
 _CONTAINER_ID = "0"
+
+# Stream items use IDs "0", "1", "2", ... matching their index
 
 
 class ContentDirectoryService(UpnpServerService):
     """ContentDirectory:1 service.
 
-    Exposes a single audio item representing the internet radio stream.
+    Exposes a container with one audio item per configured stream.
     """
 
     SERVICE_DEFINITION = ServiceInfo(
@@ -214,22 +233,18 @@ class ContentDirectoryService(UpnpServerService):
     def __init__(self, requester: UpnpRequester) -> None:
         """Initialize."""
         super().__init__(requester)
-        self._stream_url: str = ""
-        self._stream_title: str = "Internet Radio"
-        self._stream_mime_type: str = "audio/mpeg"
+        self._streams: list[StreamConfig] = [
+            StreamConfig(url="", name="Internet Radio", mime_type="audio/mpeg"),
+        ]
         self._host_url: str = ""
 
     def configure(
         self,
-        stream_url: str,
-        stream_title: str,
-        stream_mime_type: str,
+        streams: list[StreamConfig],
         host_url: str,
     ) -> None:
-        """Configure the stream details."""
-        self._stream_url = stream_url
-        self._stream_title = stream_title
-        self._stream_mime_type = stream_mime_type
+        """Configure stream entries."""
+        self._streams = streams
         self._host_url = host_url
 
     # pylint: disable=invalid-name,unused-argument
@@ -296,50 +311,72 @@ class ContentDirectoryService(UpnpServerService):
             RequestedCount,
         )
 
-        # Build the stream URL that the client will use to request audio data
-        stream_url = f"{self._host_url}/stream"
-
         if ObjectID == "0" and BrowseFlag == "BrowseMetadata":
             # Root container metadata
+            title = (self._streams[0].name if self._streams else "Streams")
+            child_count = len(self._streams)
             result = _build_didl_container(
-                "0", "-1", self._stream_title, 1,
+                "0", "-1", title, child_count,
             )
+            n_returned = 1 if result else 0
 
         elif ObjectID == "0" and BrowseFlag == "BrowseDirectChildren":
-            # List children of root: our single radio item
-            result = _build_didl_item(
-                item_id=_ITEM_ID,
-                parent_id=_CONTAINER_ID,
-                title=self._stream_title,
-                url=stream_url,
-                mime_type=self._stream_mime_type,
-            )
+            # List all stream items as children of root
+            items_parts: list[str] = []
+            for idx, stream in enumerate(self._streams):
+                stream_url = f"{self._host_url}/stream/{idx}"
+                items_parts.append(
+                    _build_item_xml(
+                        item_id=str(idx),
+                        parent_id=_CONTAINER_ID,
+                        title=stream.name,
+                        url=stream_url,
+                        mime_type=stream.mime_type,
+                    )
+                )
 
-        elif ObjectID == _ITEM_ID and BrowseFlag == "BrowseMetadata":
-            # Item metadata
-            result = _build_didl_item(
-                item_id=_ITEM_ID,
-                parent_id=_CONTAINER_ID,
-                title=self._stream_title,
-                url=stream_url,
-                mime_type=self._stream_mime_type,
-            )
+            # Apply pagination
+            total = len(items_parts)
+            start = StartingIndex if StartingIndex < total else total
+            end = min(start + RequestedCount, total) if RequestedCount else total
+            items_xml = "".join(items_parts[start:end])
+            result = f'<DIDL-Lite {_DIDL_XMLNS}>{items_xml}</DIDL-Lite>'
+            n_returned = end - start
+
+        elif ObjectID.isdigit() and BrowseFlag == "BrowseMetadata":
+            # Single item metadata
+            idx = int(ObjectID)
+            if 0 <= idx < len(self._streams):
+                stream = self._streams[idx]
+                stream_url = f"{self._host_url}/stream/{idx}"
+                result = _build_didl_item(
+                    item_id=str(idx),
+                    parent_id=_CONTAINER_ID,
+                    title=stream.name,
+                    url=stream_url,
+                    mime_type=stream.mime_type,
+                )
+                n_returned = 1
+            else:
+                result = ""
+                n_returned = 0
 
         else:
             result = ""
+            n_returned = 0
 
         _LOGGER.debug(
-            "Browse result for %s/%s: %d chars, url=%s",
+            "Browse result for %s/%s: %d chars, %d items",
             ObjectID,
             BrowseFlag,
             len(result),
-            stream_url,
+            n_returned,
         )
 
         return {
             "Result": result,
-            "NumberReturned": 1 if result else 0,
-            "TotalMatches": 1 if result else 0,
+            "NumberReturned": n_returned,
+            "TotalMatches": len(self._streams) if ObjectID == "0" else n_returned,
             "UpdateID": 0,
         }
 
@@ -552,7 +589,7 @@ class MediaServerDevice(UpnpServerDevice):
     """DLNA MediaServer device.
 
     Presents itself as a MediaServer:1 device on the network and exposes
-    a single audio item for the internet radio stream.
+    one audio item per configured stream in its ContentDirectory.
 
     Services are configured externally after creation via configure_services().
     This allows UpnpServer to instantiate the device with the standard
@@ -597,31 +634,40 @@ class MediaServerDevice(UpnpServerDevice):
             boot_id=boot_id,
             config_id=config_id,
         )
-        self._stream_forwarder: StreamForwarder | None = None
+        self._forwarders: list[StreamForwarder] = []
+
+    def set_forwarders(self, forwarders: list[StreamForwarder]) -> None:
+        """Set multiple stream forwarders and register routes.
+
+        Each forwarder is mounted at ``/stream/<index>``.
+        For single-stream backward compat, ``/stream`` also works when
+        there is exactly one forwarder.
+        """
+        self._forwarders = list(forwarders)
+
+        from aiohttp.web import get
+        routes: list[RouteDef] = []
+        for idx, fwd in enumerate(self._forwarders):
+            routes.append(get(f"/stream/{idx}", fwd.handle_request))
+        # Backward compat: single stream also works at /stream
+        if len(self._forwarders) == 1:
+            routes.append(get("/stream", self._forwarders[0].handle_request))
+        self.ROUTES = tuple(routes)
 
     def set_forwarder(self, forwarder: StreamForwarder) -> None:
-        """Set the stream forwarder and add its route."""
-        self._stream_forwarder = forwarder
-
-        # Create a route for /stream that the forwarder handles
-        from aiohttp.web import get
-        self.ROUTES = (get("/stream", forwarder.handle_request),)
+        """Set a single stream forwarder (backward-compat)."""
+        self.set_forwarders([forwarder])
 
     def configure_services(
         self,
-        stream_url: str,
-        stream_title: str,
-        stream_mime_type: str,
+        streams: list[StreamConfig],
         host_url: str,
     ) -> None:
         """Configure services with stream details after creation."""
         for service in self.all_services:
             if isinstance(service, ContentDirectoryService):
-                service.configure(
-                    stream_url=stream_url,
-                    stream_title=stream_title,
-                    stream_mime_type=stream_mime_type,
-                    host_url=host_url,
-                )
+                service.configure(streams=streams, host_url=host_url)
             elif isinstance(service, ConnectionManagerService):
-                service.configure(mime_type=stream_mime_type)
+                # Use the first stream's mime type as the default
+                mime = streams[0].mime_type if streams else "audio/mpeg"
+                service.configure(mime_type=mime)

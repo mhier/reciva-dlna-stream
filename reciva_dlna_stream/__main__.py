@@ -19,6 +19,7 @@ from uuid import uuid4
 from .forwarder import StreamForwarder
 from .server import MediaServerDevice
 from .server_lifecycle import ServerHandle, start_server
+from .stream_config import ServerConfig, StreamConfig, load_config
 
 # ---------------------------------------------------------------------------
 # Monkey-patch: increase SSDP multicast TTL from 2 to 4
@@ -51,13 +52,16 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--stream-url",
-        required=True,
         help="URL of the internet radio stream to forward",
     )
     parser.add_argument(
         "--name",
         default="Internet Radio Stream",
         help="Friendly name for the DLNA server (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--config",
+        help="Path to JSON config file with stream definitions",
     )
     parser.add_argument(
         "--port",
@@ -105,14 +109,35 @@ async def async_main(args: argparse.Namespace) -> None:
     _LOGGER.info("HTTP server binding to: %s", http_bind)
     _LOGGER.info("SSDP source IP: %s", local_ip)
 
-    # Create stream forwarder
-    forwarder = StreamForwarder(
-        stream_url=args.stream_url,
-        mime_type=args.mime_type,
-    )
+    # ------------------------------------------------------------------
+    # Resolve streams: either from --config or from --stream-url + --name
+    # ------------------------------------------------------------------
+
+    if args.config:
+        server_config = load_config(args.config)
+    elif args.stream_url:
+        server_config = ServerConfig(streams=[
+            StreamConfig(url=args.stream_url, name=args.name, mime_type=args.mime_type),
+        ])
+    else:
+        _LOGGER.error(
+            "Either --config or --stream-url must be provided"
+        )
+        sys.exit(1)
+
+    streams = list(server_config.streams)
+    _LOGGER.info("Configured %d stream(s)", len(streams))
+
+    # Create a StreamForwarder for each configured stream
+    forwarders: list[StreamForwarder] = []
+    for stream in streams:
+        fwd = StreamForwarder(stream_url=stream.url, mime_type=stream.mime_type)
+        forwarders.append(fwd)
 
     # Build server device class with a unique UDN and custom name
-    device_class = _make_device_class(args.name, forwarder)
+    # Use the first stream's name as the device friendly name
+    device_name = streams[0].name if len(streams) == 1 else "reciva-dlna-stream"
+    device_class = _make_device_class(device_name, forwarders)
 
     http_port = args.port or 0
 
@@ -122,21 +147,20 @@ async def async_main(args: argparse.Namespace) -> None:
         local_ip=local_ip,
         http_bind=http_bind,
         http_port=http_port,
-        stream_url=args.stream_url,
-        stream_title=args.name,
-        stream_mime_type=args.mime_type,
-        forwarder=forwarder,
+        streams=streams,
+        forwarders=forwarders,
     )
     base_uri = f"http://{local_ip}:{stopper.port}"
 
     _LOGGER.info("=" * 50)
     _LOGGER.info(
         "DLNA server started: '%s' at %s",
-        args.name,
+        device_name,
         base_uri,
     )
     _LOGGER.info("Device XML: %s/device.xml", base_uri)
-    _LOGGER.info("Stream URL: %s", args.stream_url)
+    for idx, stream in enumerate(streams):
+        _LOGGER.info("Stream %d: %s <- %s", idx, stream.name, stream.url)
     _LOGGER.info("SSDP advertisements being sent every ~30s")
     _LOGGER.info("Waiting for DLNA clients on the network...")
     _LOGGER.info("=" * 50)
@@ -188,7 +212,7 @@ def _get_local_ip() -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def _make_device_class(friendly_name: str, forwarder: StreamForwarder) -> type:
+def _make_device_class(friendly_name: str, forwarders: list[StreamForwarder]) -> type:
     """Create a MediaServerDevice subclass with a unique UDN and custom name."""
     udn = f"uuid:{uuid4()}"
 
@@ -207,14 +231,14 @@ def _make_device_class(friendly_name: str, forwarder: StreamForwarder) -> type:
             boot_id: int = 1,
             config_id: int = 1,
         ) -> None:
-            """Initialize and set forwarder."""
+            """Initialize and set forwarders."""
             super().__init__(
                 requester=requester,
                 base_uri=base_uri,
                 boot_id=boot_id,
                 config_id=config_id,
             )
-            self.set_forwarder(forwarder)
+            self.set_forwarders(forwarders)
 
     return CustomMediaServerDevice
 

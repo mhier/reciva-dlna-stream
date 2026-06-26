@@ -1,7 +1,7 @@
 # UPnP Device & Service Design
 
 ## Purpose
-Define the DLNA MediaServer device and its services using the `async_upnp_client` library. The device exposes a single audio item representing the internet radio stream.
+Define the DLNA MediaServer device and its services using the `async_upnp_client` library. The device exposes the configured streams as audio items in the ContentDirectory.
 
 ## Device: `MediaServerDevice`
 
@@ -23,16 +23,25 @@ DEVICE_DEFINITION = DeviceInfo(
 - `ContentDirectoryService` (ContentDirectory:1)
 - `ConnectionManagerService` (ConnectionManager:1)
 
-### Routes
-- `/stream` → `StreamForwarder.handle_request` (added dynamically via `set_forwarder()`)
+### Routes (single-stream)
+- `/stream` → `StreamForwarder.handle_request` (added via `set_forwarder()` or `set_forwarders(one_element_list)`)
+
+### Routes (multi-stream)
+- `/stream/0`, `/stream/1`, ... → each forwarder's `handle_request` (added via `set_forwarders()`)
+
+Only in single-stream mode (exactly 1 forwarder) is the legacy `/stream` route registered.
 
 ### Key Methods
 
-#### `set_forwarder(forwarder: StreamForwarder)`
-Stores the forwarder and creates the `/stream` route pointing to `forwarder.handle_request`.
+#### `set_forwarders(forwarders: list[StreamForwarder])`
+Stores all forwarders and creates routes `/stream/{index}` for each one.
+If exactly one forwarder, also registers legacy `/stream` for backward compatibility.
 
-#### `configure_services(stream_url, stream_title, stream_mime_type, host_url)`
-Iterates all services and calls their `configure()` with appropriate parameters.
+#### `set_forwarder(forwarder: StreamForwarder)`
+Convenience wrapper — delegates to `set_forwarders([forwarder])`.
+
+#### `configure_services(streams: list[StreamConfig], host_url: str)`
+Iterates all services and calls their `configure()` with the full stream list.
 
 ## Service: `ContentDirectoryService`
 
@@ -65,11 +74,11 @@ Returns DIDL-Lite XML. Handles these cases:
 
 | ObjectID | BrowseFlag | Result |
 |----------|-----------|--------|
-| "0" | BrowseMetadata | Container metadata (childCount=1) |
-| "0" | BrowseDirectChildren | Single audio item (title, URL=`/stream`) |
-| _ITEM_ID (same as "0") | BrowseMetadata | Item metadata (same URL) |
+| "0" | BrowseMetadata | Container metadata (childCount = number of streams) |
+| "0" | BrowseDirectChildren | One `<item>` per stream, each with its own URL `/stream/{id}` |
+| "N" (digit) | BrowseMetadata | Item metadata for stream index N (URL `/stream/{N}`) |
 
-The stream URL returned is always `{host_url}/stream`.
+The stream URL returned is `{host_url}/stream/{item_id}`.
 
 #### `GetSearchCapabilities()`, `GetSortCapabilities()`, `GetSystemUpdateID()`
 Standard ContentDirectory actions, return empty/default values.
@@ -81,24 +90,29 @@ Not implemented. Returns empty result (`NumberReturned=0, TotalMatches=0`).
 
 ### DIDL-Lite XML Structure
 
-Browse result for "BrowseDirectChildren":
+Browse result for "BrowseDirectChildren" (example with 2 streams):
 ```xml
 <DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/"
            xmlns:dc="http://purl.org/dc/elements/1.1/"
            xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">
   <item id="0" parentID="0" restricted="true">
-    <dc:title>Stream Name</dc:title>
+    <dc:title>Deutschlandfunk</dc:title>
     <upnp:class>object.item.audioItem.audioBroadcast</upnp:class>
-    <res protocolInfo="http-get:*:audio/mpeg:*">http://IP:PORT/stream</res>
+    <res protocolInfo="http-get:*:audio/mpeg:*">http://IP:PORT/stream/0</res>
+  </item>
+  <item id="1" parentID="0" restricted="true">
+    <dc:title>Deutschlandfunk Kultur</dc:title>
+    <upnp:class>object.item.audioItem.audioBroadcast</upnp:class>
+    <res protocolInfo="http-get:*:audio/mpeg:*">http://IP:PORT/stream/1</res>
   </item>
 </DIDL-Lite>
 ```
 
-Container metadata:
+Container metadata (here with 2 streams):
 ```xml
 <DIDL-Lite ...>
-  <container id="0" parentID="-1" restricted="true" childCount="1">
-    <dc:title>Stream Name</dc:title>
+  <container id="0" parentID="-1" restricted="true" childCount="2">
+    <dc:title>Deutschlandfunk</dc:title>
     <upnp:class>object.container</upnp:class>
   </container>
 </DIDL-Lite>

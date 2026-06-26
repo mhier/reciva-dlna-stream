@@ -23,102 +23,51 @@ Uses `start_server()` (same as production) to start the full server with the str
 ### `dlna_base_uri`
 The base URI of the running server (e.g. `http://127.0.0.1:12345`).
 
+### Multi-stream fixtures
+
+- `stream_forwarder_alt` — second `StreamForwarder` for multi-stream tests
+- `dlna_device_class_multi` — `MediaServerDevice` subclass with 2 pre-wired forwarders
+- `dlna_server_multi` — full multi-stream server with 2 streams
+- `dlna_base_uri_multi` — base URI of the multi-stream server
+
 ## Tests (`test_integration.py`)
 
 ### `test_reciva_dlna_stream_proxying`
-Full integration test:
-1. Discover the DMS via SSDP (async_search)
-2. Browse DirectChildren of ContentDirectory → get stream URL
-3. Fetch stream data via HTTP (200 OK, from ring buffer)
-4. Verify data matches dummy MP3 input
-
-### `test_stream_stops_when_no_clients`
-Verify connection cleanup:
-1. Read a small chunk from /stream
-2. Disconnect
-3. Verify a new connection works (old cleanup didn't break the server)
-
-### `test_browse_metadata`
-Test BrowseMetadata on root container:
-1. Create device from XML
-2. Browse "0" with BrowseMetadata
-3. Verify container title, class, childCount
-
-### `test_range_request`
-Test range request for the main body (served from ring buffer):
-1. Send `Range: bytes=0-16383` to /stream
-2. Verify 206 status, Content-Range, Content-Length, Accept-Ranges
-3. Read data, verify it matches dummy MP3
-
-### `test_end_of_file_range_request`
-Test synthetic footer (Reciva end-of-file probe):
-1. Send `Range: bytes=<footer_start>-<file_end>` to /stream
-2. Verify 206 status, correct Content-Range
-3. Read data, verify it matches the synthetic ID3v1 footer
-4. First 4 bytes should be `\x00\x54\x41\x47` (0x00 + "TAG")
-
-### `test_active_connection_count`
-Verify concurrent connections work:
-1. Open two concurrent GET /stream connections
-2. Both return 200 OK
-3. Both return the same data from the ring buffer
-
-### `test_fake_content_length_property`
-Verify `StreamForwarder.fake_content_length` returns the expected constant value.
-
-### `test_full_stream_response_headers`
-Verify that a 200 OK response has the correct headers:
-1. Content-Type: audio/mpeg
-2. Accept-Ranges: bytes
-3. TransferMode.DLNA.ORG: Streaming
-4. Cache-Control: no-cache
-5. Content-Length: fake file size
-
-### `test_data_consistency_across_connections`
-Critical for Reciva radios:
-1. Request bytes=0-4095 over first HTTP connection → get data1
-2. Request bytes=0-4095 over second HTTP connection → get data2
-3. Assert data1 == data2 (ring buffer consistency)
-
-### `test_multi_chunk_range_request`
-Verify the chunked read loop works:
-1. Request range covering all 16 KB of dummy data
-2. Verify 206, correct headers, correct data
-
-### `test_connection_manager_actions`
-Test all three ConnectionManager:1 actions via raw SOAP:
-1. GetProtocolInfo → response contains `http-get:*:audio/mpeg:*`
-2. GetCurrentConnectionIDs → response contains `<ConnectionIDs>0</ConnectionIDs>`
-3. GetCurrentConnectionInfo → response contains `<Status>OK</Status>` and `<Direction>Output</Direction>`
-
-### `test_search_action_returns_empty`
-Verify Search action returns empty result:
-1. POST raw SOAP Search request to ContentDirectory
-2. Response contains empty `<Result />` element
-
-### `test_device_xml_valid`
-Verify device description XML:
-1. Fetch /device.xml
-2. Verify well-formed XML
-3. Verify correct device type, friendly name, UDN (not default placeholder)
-4. Verify 2 services are listed
-
+...
 ### `test_ssdp_location_port`
-Verify SSDP LOCATION URL has correct port:
-1. Send M-SEARCH query via UDP multicast
-2. Listen for search responses
-3. Find one matching our device's LOCATION URL
-4. Verify URL matches expected `http://127.0.0.1:{port}/device.xml`
+...
 
-Note: This test uses M-SEARCH (active query) instead of waiting for NOTIFY (passive, every ~30s). It is not timing-dependent.
+### `test_multi_stream_browse_direct_children`
+Multi-stream mode: Browse children of root — verify 2 items returned with correct URLs (`/stream/0`, `/stream/1`) and titles.
+
+### `test_multi_stream_browse_metadata_root`
+Multi-stream mode: BrowseMetadata on root container — verify `childCount == "2"`.
+
+### `test_multi_stream_browse_item_metadata`
+Multi-stream mode: BrowseMetadata on item "1" — verify title and URL for second stream.
+
+### `test_multi_stream_range_request`
+Multi-stream mode: Range requests to `/stream/0` and `/stream/1` — both return correct 206 data.
+
+### `test_multi_stream_full_request`
+Multi-stream mode: Full (200) requests to `/stream/0` and `/stream/1`.
+
+### `test_multi_stream_end_of_file`
+Multi-stream mode: Synthetic footer served at `/stream/0` and `/stream/1`.
+
+### `test_single_stream_backward_compat_route`
+Single-stream mode: legacy `/stream` works as alias.
+
+### `test_multi_stream_no_legacy_route`
+Multi-stream mode: legacy `/stream` returns 404 (only indexed routes exist).
 
 ## Coverage Summary
 
 | Spec file | Claims | Covered | Missing (intentionally low priority) |
 |-----------|--------|---------|--------------------------------------|
-| architecture.md | 5 key decisions | 5/5 | — |
+| architecture.md | 6 key decisions | 6/6 | — |
 | forwarder.md | ~15 claims | 12/15 | Buffer timeout, trim error, auto-reconnect (edge cases) |
-| server.md | ~12 claims | 11/12 | Search action returns empty (NOW COVERED) |
+| server.md | ~15 claims | 14/15 | Search action returns empty |
 | server-lifecycle.md | ~5 claims | 3/5 | Startup ordering (hard to verify externally), SSDP TTL value |
 | radio-behavior.md | ~7 claims | 5/7 | Retry behavior (loop simulation), full 128KB probe size |
 

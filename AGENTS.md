@@ -82,13 +82,14 @@ reciva_dlna_stream/
 ├── __init__.py          # Package marker, re-exports
 ├── __main__.py          # CLI entry point
 ├── forwarder.py         # StreamForwarder + StreamBuffer
-├── server.py            # UPnP device/service definitions
-└── server_lifecycle.py  # Server startup/shutdown
+├── server.py            # UPnP device/service definitions (multi-stream)
+├── server_lifecycle.py  # Server startup/shutdown
+└── stream_config.py     # JSON config parsing for multi-stream
 
 tests/
 ├── __init__.py
-├── conftest.py          # Fixtures
-└── test_integration.py  # Tests
+├── conftest.py          # Fixtures (single + multi-stream)
+└── test_integration.py  # Tests (22 tests)
 
 specification/
 ├── architecture.md      # Overall design

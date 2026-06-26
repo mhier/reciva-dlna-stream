@@ -659,3 +659,228 @@ async def test_ssdp_location_port(dlna_server, dlna_base_uri: str) -> None:
         f"Did not find SSDP SEARCH RESPONSE with LOCATION={expected_location} "
         f"in {SOCKET_TIMEOUT}s."
     )
+
+
+# ---------------------------------------------------------------------------
+# Multi-stream tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_multi_stream_browse_direct_children(
+    dlna_base_uri_multi: str,
+) -> None:
+    """
+    Test that BrowseDirectChildren on a multi-stream server returns
+    all configured streams.
+    """
+    requester = AiohttpRequester()
+    factory = UpnpFactory(requester, non_strict=True)
+    upnp_device = await factory.async_create_device(
+        f"{dlna_base_uri_multi}/device.xml"
+    )
+    dms = DmsDevice(upnp_device, event_handler=None)
+
+    # Browse children of root
+    result = await dms.async_browse_direct_children("0")
+
+    assert result.number_returned == 2
+    assert result.total_matches == 2
+
+    items = result.result
+    assert len(items) == 2
+
+    # First stream
+    assert items[0].title == "Test Radio Stream"
+    assert items[0].upnp_class == "object.item.audioItem.audioBroadcast"
+    assert len(items[0].res) == 1
+    assert items[0].res[0].uri.endswith("/stream/0")
+
+    # Second stream
+    assert items[1].title == "Alt Radio Stream"
+    assert items[1].upnp_class == "object.item.audioItem.audioBroadcast"
+    assert len(items[1].res) == 1
+    assert items[1].res[0].uri.endswith("/stream/1")
+
+
+@pytest.mark.asyncio
+async def test_multi_stream_browse_metadata_root(
+    dlna_base_uri_multi: str,
+) -> None:
+    """
+    Test that BrowseMetadata on root container reports the correct
+    child count for multi-stream.
+    """
+    requester = AiohttpRequester()
+    factory = UpnpFactory(requester, non_strict=True)
+    upnp_device = await factory.async_create_device(
+        f"{dlna_base_uri_multi}/device.xml"
+    )
+    dms = DmsDevice(upnp_device, event_handler=None)
+
+    result = await dms.async_browse("0", browse_flag="BrowseMetadata")
+
+    assert result.number_returned == 1
+    assert result.result is not None
+    container = result.result[0]
+    assert container.child_count == "2"
+
+
+@pytest.mark.asyncio
+async def test_multi_stream_browse_item_metadata(
+    dlna_base_uri_multi: str,
+) -> None:
+    """
+    Test BrowseMetadata on individual stream items in multi-stream mode.
+    """
+    requester = AiohttpRequester()
+    factory = UpnpFactory(requester, non_strict=True)
+    upnp_device = await factory.async_create_device(
+        f"{dlna_base_uri_multi}/device.xml"
+    )
+    dms = DmsDevice(upnp_device, event_handler=None)
+
+    # Browse metadata of item "1" (second stream)
+    result = await dms.async_browse("1", browse_flag="BrowseMetadata")
+
+    assert result.number_returned == 1
+    assert result.result is not None
+    item = result.result[0]
+    assert item.title == "Alt Radio Stream"
+    assert item.upnp_class == "object.item.audioItem.audioBroadcast"
+    assert len(item.res) == 1
+    assert item.res[0].uri.endswith("/stream/1")
+
+
+@pytest.mark.asyncio
+async def test_multi_stream_range_request(
+    dlna_base_uri_multi: str,
+    dummy_mp3_data: bytes,
+) -> None:
+    """
+    Test that range requests to individual stream routes work correctly.
+    """
+    range_size = len(dummy_mp3_data)
+    range_end = range_size - 1
+
+    # Stream 0
+    async with ClientSession() as session:
+        async with session.get(
+            f"{dlna_base_uri_multi}/stream/0",
+            headers={"Range": f"bytes=0-{range_end}"},
+            timeout=STREAM_READ_TIMEOUT,
+        ) as resp:
+            assert resp.status == 206
+            data = await resp.content.readexactly(range_size)
+            assert data == dummy_mp3_data
+
+    # Stream 1
+    async with ClientSession() as session:
+        async with session.get(
+            f"{dlna_base_uri_multi}/stream/1",
+            headers={"Range": f"bytes=0-{range_end}"},
+            timeout=STREAM_READ_TIMEOUT,
+        ) as resp:
+            assert resp.status == 206
+            data = await resp.content.readexactly(range_size)
+            assert data == dummy_mp3_data
+
+
+@pytest.mark.asyncio
+async def test_multi_stream_full_request(
+    dlna_base_uri_multi: str,
+    dummy_mp3_data: bytes,
+) -> None:
+    """
+    Test that full (non-range) requests to individual stream routes work.
+    """
+    async with ClientSession() as session:
+        async with session.get(
+            f"{dlna_base_uri_multi}/stream/0",
+            timeout=STREAM_READ_TIMEOUT,
+        ) as resp:
+            assert resp.status == 200
+            assert resp.content_type == "audio/mpeg"
+            received = await resp.content.readexactly(len(dummy_mp3_data))
+            assert received == dummy_mp3_data
+
+    async with ClientSession() as session:
+        async with session.get(
+            f"{dlna_base_uri_multi}/stream/1",
+            timeout=STREAM_READ_TIMEOUT,
+        ) as resp:
+            assert resp.status == 200
+            assert resp.content_type == "audio/mpeg"
+            received = await resp.content.readexactly(len(dummy_mp3_data))
+            assert received == dummy_mp3_data
+
+
+@pytest.mark.asyncio
+async def test_multi_stream_end_of_file(
+    dlna_base_uri_multi: str,
+) -> None:
+    """
+    Test that synthetic footer is served for multi-stream routes.
+    """
+    from reciva_dlna_stream.forwarder import _FAKE_CONTENT_LENGTH, _SYNTHETIC_FOOTER
+
+    range_start = _FAKE_CONTENT_LENGTH - len(_SYNTHETIC_FOOTER)
+    range_end = _FAKE_CONTENT_LENGTH - 1
+
+    async with ClientSession() as session:
+        async with session.get(
+            f"{dlna_base_uri_multi}/stream/0",
+            headers={"Range": f"bytes={range_start}-{range_end}"},
+            timeout=STREAM_READ_TIMEOUT,
+        ) as resp:
+            assert resp.status == 206
+            data = await resp.content.readexactly(len(_SYNTHETIC_FOOTER))
+            assert data == _SYNTHETIC_FOOTER
+
+    async with ClientSession() as session:
+        async with session.get(
+            f"{dlna_base_uri_multi}/stream/1",
+            headers={"Range": f"bytes={range_start}-{range_end}"},
+            timeout=STREAM_READ_TIMEOUT,
+        ) as resp:
+            assert resp.status == 206
+            data = await resp.content.readexactly(len(_SYNTHETIC_FOOTER))
+            assert data == _SYNTHETIC_FOOTER
+
+
+@pytest.mark.asyncio
+async def test_single_stream_backward_compat_route(
+    dlna_base_uri: str,
+    dummy_mp3_data: bytes,
+) -> None:
+    """
+    Test that in single-stream mode, /stream (without index) still works
+    as a backward-compatible alias.
+    """
+    range_size = len(dummy_mp3_data)
+    range_end = range_size - 1
+
+    async with ClientSession() as session:
+        async with session.get(
+            f"{dlna_base_uri}/stream",
+            headers={"Range": f"bytes=0-{range_end}"},
+            timeout=STREAM_READ_TIMEOUT,
+        ) as resp:
+            assert resp.status == 206
+            data = await resp.content.readexactly(range_size)
+            assert data == dummy_mp3_data
+
+
+@pytest.mark.asyncio
+async def test_multi_stream_no_legacy_route(
+    dlna_base_uri_multi: str,
+) -> None:
+    """
+    Test that in multi-stream mode, /stream (without index) returns 404.
+    """
+    async with ClientSession() as session:
+        async with session.get(
+            f"{dlna_base_uri_multi}/stream",
+            timeout=STREAM_READ_TIMEOUT,
+        ) as resp:
+            assert resp.status == 404
