@@ -40,14 +40,18 @@ class ServerHandle:
         search_responder: SsdpSearchResponder,
         advertisement_announcer: SsdpAdvertisementAnnouncer,
         runner: AppRunner,
+        forwarder: object,
     ) -> None:
         self.port = port
         self._search_responder = search_responder
         self._advertisement_announcer = advertisement_announcer
         self._runner = runner
+        self._forwarder = forwarder
 
     async def stop(self) -> None:
-        """Stop SSDP, then HTTP."""
+        """Stop stream buffer, SSDP, then HTTP."""
+        if hasattr(self._forwarder, 'stop_buffer'):
+            await self._forwarder.stop_buffer()
         await self._advertisement_announcer.async_stop()
         await self._search_responder.async_stop()
         await self._runner.cleanup()
@@ -160,9 +164,14 @@ async def start_server(
     await search_responder.async_start()
     await advertisement_announcer.async_start()
 
+    # Step 5: Start the buffer background reader
+    if hasattr(forwarder, 'start_buffer'):
+        await forwarder.start_buffer()
+
     return ServerHandle(
         port=actual_port,
         search_responder=search_responder,
         advertisement_announcer=advertisement_announcer,
         runner=runner,
+        forwarder=forwarder,
     )

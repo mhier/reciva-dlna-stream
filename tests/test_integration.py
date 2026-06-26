@@ -229,7 +229,45 @@ async def test_range_request(
 
 
 @pytest.mark.asyncio
-async def test_device_xml_valid(dlna_base_uri: str) -> None:
+async def test_end_of_file_range_request(
+    dlna_base_uri: str,
+) -> None:
+    """
+    Test that a Range request targeting the end of the fake file
+    returns synthetic ID3v1 tag data (last 129 bytes).
+    """
+    from dlna_stream.forwarder import _FAKE_CONTENT_LENGTH, _SYNTHETIC_FOOTER
+
+    # The last 129 bytes of the fake file
+    range_start = _FAKE_CONTENT_LENGTH - len(_SYNTHETIC_FOOTER)
+    range_end = _FAKE_CONTENT_LENGTH - 1
+
+    async with ClientSession() as session:
+        async with session.get(
+            f"{dlna_base_uri}/stream",
+            headers={"Range": f"bytes={range_start}-{range_end}"},
+            timeout=STREAM_READ_TIMEOUT,
+        ) as resp:
+            assert resp.status == 206, f"Expected 206, got {resp.status}"
+            assert resp.headers.get("Content-Range", "").startswith(
+                f"bytes {range_start}-{range_end}/"
+            ), f"Bad Content-Range: {resp.headers.get('Content-Range')}"
+            assert resp.headers.get("Accept-Ranges") == "bytes"
+            assert resp.headers.get("TransferMode.DLNA.ORG") == "Streaming"
+
+            data = await resp.content.readexactly(len(_SYNTHETIC_FOOTER))
+            assert len(data) == len(_SYNTHETIC_FOOTER), (
+                f"Expected {len(_SYNTHETIC_FOOTER)} bytes, got {len(data)}"
+            )
+            assert data == _SYNTHETIC_FOOTER, (
+                "Synthetic footer data mismatch"
+            )
+
+            _LOGGER.info(
+                "Verified %d bytes of synthetic footer: starts with %s",
+                len(data),
+                data[:4].hex(),
+            )
     """
     Test that the device description XML is valid and contains the correct
     URLs (not port 0).
@@ -276,8 +314,11 @@ async def test_device_xml_valid(dlna_base_uri: str) -> None:
 @pytest.mark.asyncio
 async def test_ssdp_location_port(dlna_server, dlna_base_uri: str) -> None:
     """
-    Verify that the SSDP advertisement LOCATION URL contains the correct
-    port (not 0). We do this by scraping SSDP NOTIFY packets.
+    Verify that the SSDP LOCATION URL contains the correct port (not 0).
+
+    We send an SSDP M-SEARCH query and verify the search response contains
+    the correct LOCATION URL. This is more reliable than passively listening
+    for NOTIFY advertisements (which arrive every ~30s).
     """
     import socket
     import struct
@@ -286,8 +327,12 @@ async def test_ssdp_location_port(dlna_server, dlna_base_uri: str) -> None:
     SOCKET_TIMEOUT = 5
     MCAST_GRP = "239.255.255.250"
     MCAST_PORT = 1900
+    ST = "urn:schemas-upnp-org:device:MediaServer:1"
 
-    # Listen for SSDP multicast packets
+    expected_location = f"{dlna_base_uri}/device.xml"
+    found = False
+
+    # Join SSDP multicast group
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind(("", MCAST_PORT))
@@ -295,11 +340,22 @@ async def test_ssdp_location_port(dlna_server, dlna_base_uri: str) -> None:
     sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
     sock.setblocking(False)
 
-    expected_location = f"{dlna_base_uri}/device.xml"
-    found = False
-
     try:
+        # Send M-SEARCH query
+        mx = 3
+        msearch = (
+            f"M-SEARCH * HTTP/1.1\r\n"
+            f"HOST: {MCAST_GRP}:{MCAST_PORT}\r\n"
+            f"MAN: \"ssdp:discover\"\r\n"
+            f"MX: {mx}\r\n"
+            f"ST: {ST}\r\n"
+            f"\r\n"
+        ).encode("utf-8")
+
         loop = asyncio.get_running_loop()
+        await loop.sock_sendto(sock, msearch, (MCAST_GRP, MCAST_PORT))
+
+        # Listen for responses
         deadline = loop.time() + SOCKET_TIMEOUT
         while loop.time() < deadline:
             try:
@@ -311,9 +367,12 @@ async def test_ssdp_location_port(dlna_server, dlna_base_uri: str) -> None:
                         if url == expected_location:
                             found = True
                             _LOGGER.info(
-                                "SSDP LOCATION matches: %s", url
+                                "SSDP SEARCH RESPONSE LOCATION matches: %s",
+                                url,
                             )
                             break
+                    if line.lower().startswith("st:"):
+                        _LOGGER.debug("SSDP ST: %s", line)
             except (BlockingIOError, TimeoutError):
                 await asyncio.sleep(0.1)
                 continue
@@ -323,8 +382,6 @@ async def test_ssdp_location_port(dlna_server, dlna_base_uri: str) -> None:
         sock.close()
 
     assert found, (
-        f"Did not find SSDP advertisement with LOCATION={expected_location} "
-        f"in {SOCKET_TIMEOUT}s. SSDP advertisements are sent every ~30s by "
-        f"default, so the test may need a longer timeout or the server may "
-        f"not have sent one yet."
+        f"Did not find SSDP SEARCH RESPONSE with LOCATION={expected_location} "
+        f"in {SOCKET_TIMEOUT}s."
     )
