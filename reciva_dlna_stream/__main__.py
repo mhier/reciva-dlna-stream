@@ -1,7 +1,7 @@
-"""Main entry point for dlna-stream.
+"""Main entry point for reciva-dlna-stream.
 
 Usage:
-    dlna-stream --stream-url "https://example.com/radio.mp3"
+    reciva-dlna-stream --stream-url "https://example.com/radio.mp3"
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ def _patched_get_ssdp_socket(*args, **kwargs):
 
 _ssdp_module.get_ssdp_socket = _patched_get_ssdp_socket
 
-_LOGGER = logging.getLogger("dlna_stream")
+_LOGGER = logging.getLogger("reciva_dlna_stream")
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -94,7 +94,7 @@ async def async_main(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     _LOGGER.info("=" * 50)
-    _LOGGER.info("dlna-stream starting up")
+    _LOGGER.info("reciva-dlna-stream starting up")
     _LOGGER.info("Local IP (detected): %s", local_ip)
     _LOGGER.info("Bind IP (from args): %s", args.bind_ip)
 

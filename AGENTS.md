@@ -1,6 +1,6 @@
 # Agent Instructions / Development Guidelines
 
-This file documents how the `dlna-stream` project has been developed in this session, for continuity across future sessions or agent handoffs.
+This file documents how the `reciva-dlna-stream` project has been developed in this session, for continuity across future sessions or agent handoffs.
 
 ## Development Workflow
 
@@ -78,7 +78,7 @@ This file documents how the `dlna-stream` project has been developed in this ses
 
 ### Package Structure
 ```
-dlna_stream/
+reciva_dlna_stream/
 ├── __init__.py          # Package marker, re-exports
 ├── __main__.py          # CLI entry point
 ├── forwarder.py         # StreamForwarder + StreamBuffer

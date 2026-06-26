@@ -1,4 +1,4 @@
-"""Fixtures for dlna-stream integration tests."""
+"""Fixtures for reciva-dlna-stream integration tests."""
 
 from __future__ import annotations
 
@@ -11,9 +11,9 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer, unused_port
 
-from dlna_stream.forwarder import StreamForwarder
-from dlna_stream.server import MediaServerDevice
-from dlna_stream.server_lifecycle import ServerHandle, start_server
+from reciva_dlna_stream.forwarder import StreamForwarder
+from reciva_dlna_stream.server import MediaServerDevice
+from reciva_dlna_stream.server_lifecycle import ServerHandle, start_server
 
 # ---------------------------------------------------------------------------
 # Apply the SSDP TTL monkey-patch (TTL 4 per UPnP spec, library uses 2)
@@ -70,7 +70,7 @@ def dummy_mp3_data() -> bytes:
 
 @pytest.fixture()
 def dlna_http_port() -> int:
-    """Return a fixed port for the dlna-stream HTTP server."""
+    """Return a fixed port for the reciva-dlna-stream HTTP server."""
     return unused_port()
 
 
@@ -165,7 +165,7 @@ async def dlna_server(
     dlna_http_port: int,
 ) -> AsyncIterator[ServerHandle]:
     """
-    Start a fully-configured dlna-stream server using the same startup
+    Start a fully-configured reciva-dlna-stream server using the same startup
     logic as ``__main__.py`` (``start_server`` from ``server_lifecycle``),
     yield the ``ServerHandle``, then shut everything down.
     """
@@ -189,5 +189,5 @@ async def dlna_server(
 
 @pytest.fixture()
 def dlna_base_uri(dlna_server: ServerHandle, dlna_http_port: int) -> str:
-    """Return the base URI of the dlna-stream server."""
+    """Return the base URI of the reciva-dlna-stream server."""
     return f"http://127.0.0.1:{dlna_server.port}"

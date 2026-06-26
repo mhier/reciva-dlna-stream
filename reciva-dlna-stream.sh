@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# dlna-stream.sh — Launch dlna-stream using the virtual environment.
+# reciva-dlna-stream.sh — Launch reciva-dlna-stream using the virtual environment.
 #
 # Usage:
-#   ./dlna-stream.sh --stream-url "https://example.com/radio.mp3" [options]
+#   ./reciva-dlna-stream.sh --stream-url "https://example.com/radio.mp3" [options]
 #
 # This script locates the virtual environment created by setup.sh and
-# runs dlna-stream inside it, without requiring the venv to be activated.
+# runs reciva-dlna-stream inside it, without requiring the venv to be activated.
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
@@ -19,12 +19,12 @@ if [ ! -d "$VENV_DIR" ]; then
     exit 1
 fi
 
-DLNA_STREAM="$VENV_DIR/bin/dlna-stream"
+RECIVA_DLNA_STREAM="$VENV_DIR/bin/reciva-dlna-stream"
 
-if [ ! -x "$DLNA_STREAM" ]; then
-    echo "Error: dlna-stream not found in virtual environment." >&2
-    echo "Run ./setup.sh to install it." >&2
+if [ ! -x "$RECIVA_DLNA_STREAM" ]; then
+    echo "Error: reciva-dlna-stream not found in virtual environment." >&2
+    echo "Run ./setup.sh to reinstall it." >&2
     exit 1
 fi
 
-exec "$DLNA_STREAM" "$@"
+exec "$RECIVA_DLNA_STREAM" "$@"

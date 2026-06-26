@@ -1,4 +1,4 @@
-# dlna-stream
+# reciva-dlna-stream
 
 A DLNA Media Server **highly tailored to serve a Reciva-based internet radio**.
 
@@ -28,7 +28,7 @@ from it :-)
 ## Usage
 
 ```bash
-dlna-stream --stream-url "https://example.com/radio-stream.mp3"
+reciva-dlna-stream --stream-url "https://example.com/radio-stream.mp3"
 ```
 
 ### Options
@@ -64,17 +64,17 @@ package along with test dependencies (`pytest`, `pytest-asyncio`).
 ./setup.sh /path/to/python  # use a specific Python interpreter
 ```
 
-### `dlna-stream.sh` — Launch wrapper
+### `reciva-dlna-stream.sh` — Launch wrapper
 
 Starts the server using the virtual environment without requiring manual
 activation. Run it from anywhere inside the repository:
 
 ```bash
-./dlna-stream.sh --stream-url "https://example.com/radio.mp3" [options]
+./reciva-dlna-stream.sh --stream-url "https://example.com/radio.mp3" [options]
 ```
 
 It auto-detects `.venv` created by `setup.sh` and forwards all arguments to
-`dlna-stream`. If the virtual environment is missing, it prints a clear error
+`reciva-dlna-stream`. If the virtual environment is missing, it prints a clear error
 pointing you to run `./setup.sh` first.
 
 ## Running tests

@@ -1,4 +1,4 @@
-"""Server lifecycle management for dlna-stream.
+"""Server lifecycle management for reciva-dlna-stream.
 
 Provides ``_start_server()`` and ``_ServerHandle`` for starting the
 HTTP and SSDP components in the correct order, ensuring the SSDP

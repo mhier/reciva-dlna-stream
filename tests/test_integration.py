@@ -1,8 +1,8 @@
-"""Integration tests for dlna-stream.
+"""Integration tests for reciva-dlna-stream.
 
 Tests the full pipeline:
 1. A fake HTTP radio stream serves dummy MP3 data
-2. dlna-stream proxies it as a DLNA Media Server
+2. reciva-dlna-stream proxies it as a DLNA Media Server
 3. A Python DLNA client (control point) discovers the server, browses
    ContentDirectory, reads the stream URL, fetches the data, and verifies
    it matches the original.
@@ -81,14 +81,14 @@ async def _discover_dms(
 
 
 @pytest.mark.asyncio
-async def test_dlna_stream_proxying(
+async def test_reciva_dlna_stream_proxying(
     dlna_server,
     dlna_base_uri: str,
     dummy_mp3_data: bytes,
 ) -> None:
     """
     Full integration test:
-    - Discover dlna-stream via SSDP
+    - Discover reciva-dlna-stream via SSDP
     - Browse ContentDirectory to get the stream URL
     - Read the stream data
     - Verify it matches the dummy data
@@ -236,7 +236,7 @@ async def test_end_of_file_range_request(
     Test that a Range request targeting the end of the fake file
     returns synthetic ID3v1 tag data (last 129 bytes).
     """
-    from dlna_stream.forwarder import _FAKE_CONTENT_LENGTH, _SYNTHETIC_FOOTER
+    from reciva_dlna_stream.forwarder import _FAKE_CONTENT_LENGTH, _SYNTHETIC_FOOTER
 
     # The last 129 bytes of the fake file
     range_start = _FAKE_CONTENT_LENGTH - len(_SYNTHETIC_FOOTER)
@@ -303,7 +303,7 @@ async def test_fake_content_length_property(
     stream_forwarder,
 ) -> None:
     """Verify fake_content_length property returns the expected value."""
-    from dlna_stream.forwarder import _FAKE_CONTENT_LENGTH
+    from reciva_dlna_stream.forwarder import _FAKE_CONTENT_LENGTH
     assert stream_forwarder.fake_content_length == _FAKE_CONTENT_LENGTH
 
 
@@ -325,7 +325,7 @@ async def test_full_stream_response_headers(
             assert resp.headers.get("TransferMode.DLNA.ORG") == "Streaming"
             assert resp.headers.get("Cache-Control") == "no-cache"
             # Content-Length should be the fake file size
-            from dlna_stream.forwarder import _FAKE_CONTENT_LENGTH
+            from reciva_dlna_stream.forwarder import _FAKE_CONTENT_LENGTH
             assert resp.headers.get("Content-Length") == str(_FAKE_CONTENT_LENGTH)
             # Just read a bit to confirm stream works
             _ = await resp.content.readexactly(512)
@@ -383,7 +383,7 @@ async def test_multi_chunk_range_request(
     data (16384 bytes) to verify the chunked read loop in
     _handle_buffer_range works correctly.
     """
-    from dlna_stream.forwarder import _BUFFER_SIZE
+    from reciva_dlna_stream.forwarder import _BUFFER_SIZE
     # Request the full dummy data size (requires at least one read from buffer)
     range_size = len(dummy_mp3_data)
     range_end = range_size - 1

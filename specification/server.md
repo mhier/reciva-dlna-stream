@@ -12,8 +12,8 @@ Inherits from `UpnpServerDevice` (from `async_upnp_client.server`).
 DEVICE_DEFINITION = DeviceInfo(
     device_type="urn:schemas-upnp-org:device:MediaServer:1",
     friendly_name="Internet Radio Stream",          # overridable via CLI
-    manufacturer="dlna-stream",
-    model_name="dlna-stream v0.1",
+    manufacturer="reciva-dlna-stream",
+    model_name="reciva-dlna-stream v0.1",
     udn="uuid:...",                                  # overridden per instance
     url="/device.xml",
 )

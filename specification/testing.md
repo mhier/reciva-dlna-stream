@@ -25,7 +25,7 @@ The base URI of the running server (e.g. `http://127.0.0.1:12345`).
 
 ## Tests (`test_integration.py`)
 
-### `test_dlna_stream_proxying`
+### `test_reciva_dlna_stream_proxying`
 Full integration test:
 1. Discover the DMS via SSDP (async_search)
 2. Browse DirectChildren of ContentDirectory → get stream URL

@@ -562,9 +562,9 @@ class MediaServerDevice(UpnpServerDevice):
     DEVICE_DEFINITION = DeviceInfo(
         device_type="urn:schemas-upnp-org:device:MediaServer:1",
         friendly_name="Internet Radio Stream",
-        manufacturer="dlna-stream",
+        manufacturer="reciva-dlna-stream",
         manufacturer_url=None,
-        model_name="dlna-stream v0.1",
+        model_name="reciva-dlna-stream v0.1",
         model_url=None,
         udn="uuid:00000000-0000-0000-0000-000000000001",
         upc=None,

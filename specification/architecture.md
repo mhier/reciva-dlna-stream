@@ -1,7 +1,7 @@
 # Architecture Overview
 
 ## Purpose
-`dlna-stream` is a DLNA Media Server that makes a live internet radio stream (e.g. Icecast/Shoutcast MP3) discoverable and playable by UPnP/DLNA clients.
+`reciva-dlna-stream` is a DLNA Media Server that makes a live internet radio stream (e.g. Icecast/Shoutcast MP3) discoverable and playable by UPnP/DLNA clients.
 
 **This project is highly tailored to serve a Reciva-based internet radio.** Every significant design decision is driven by how Reciva radios (common in older internet radios from Coby, Sangean, and others) behave when accessing a DLNA Media Server. The server may work with other DLNA clients, but it is tested and tuned specifically for Reciva.
 
@@ -11,7 +11,7 @@ The core challenge: Reciva radios treat streams as **files with a fixed size**. 
 
 ```
 ┌─────────────┐     SSDP NOTIFY      ┌──────────────────────┐
-│  DLNA Client │◄────────────────────►│     dlna-stream      │
+│  DLNA Client │◄────────────────────►│     reciva-dlna-stream      │
 │ (Reciva Radio)│    HTTP (stream)    │                      │
 └─────────────┘                      │  HTTP Server         │
                                      │  (aiohttp :port)     │
@@ -77,7 +77,7 @@ The upstream `async_upnp_client` library creates the SSDP device before starting
 ## Directories and Files
 
 ```
-dlna_stream/
+reciva_dlna_stream/
 ├── __init__.py          # Package marker, exports
 ├── __main__.py          # CLI entry point, arg parsing
 ├── forwarder.py         # StreamForwarder + StreamBuffer

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# setup.sh — Create virtual environment and install dlna-stream.
+# setup.sh — Create virtual environment and install reciva-dlna-stream.
 #
 # Usage:
 #   ./setup.sh                  # uses python3, creates .venv
@@ -11,7 +11,7 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 PYTHON="${1:-python3}"
 
-echo "==> Setting up dlna-stream in $REPO_DIR"
+echo "==> Setting up reciva-dlna-stream in $REPO_DIR"
 echo "==> Using Python: $PYTHON ($("$PYTHON" --version))"
 
 # Create virtual environment
@@ -28,7 +28,7 @@ echo "==> Upgrading pip"
 "$VENV_DIR/bin/pip" install --upgrade pip --quiet
 
 # Install the package in editable mode with test dependencies
-echo "==> Installing dlna-stream and dependencies"
+echo "==> Installing reciva-dlna-stream and dependencies"
 "$VENV_DIR/bin/pip" install -e "$REPO_DIR" --quiet
 "$VENV_DIR/bin/pip" install pytest pytest-asyncio --quiet
 
@@ -36,10 +36,10 @@ echo ""
 echo "==> Setup complete!"
 echo ""
 echo "To start the server:"
-echo "  $VENV_DIR/bin/dlna-stream --stream-url <URL> [options]"
+echo "  $VENV_DIR/bin/reciva-dlna-stream --stream-url <URL> [options]"
 echo ""
 echo "Or use the wrapper script:"
-echo "  ./dlna-stream.sh --stream-url <URL> [options]"
+echo "  ./reciva-dlna-stream.sh --stream-url <URL> [options]"
 echo ""
 echo "To run tests:"
 echo "  $VENV_DIR/bin/python -m pytest $REPO_DIR/tests/"
