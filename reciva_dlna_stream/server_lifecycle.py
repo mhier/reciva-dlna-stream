@@ -160,11 +160,6 @@ async def start_server(
     await search_responder.async_start()
     await advertisement_announcer.async_start()
 
-    # Step 5: Start all buffer background readers
-    for fwd in forwarders:
-        if hasattr(fwd, 'start_buffer'):
-            await fwd.start_buffer()
-
     return ServerHandle(
         port=actual_port,
         search_responder=search_responder,

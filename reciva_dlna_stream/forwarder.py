@@ -75,11 +75,12 @@ _FOOTER_START = _FAKE_CONTENT_LENGTH - _FOOTER_LENGTH
 
 
 class StreamBuffer:
-    """Persistent ring buffer that continuously reads from the remote stream.
+    """On-demand ring buffer that reads from the remote stream only while needed.
 
     A background ``asyncio.Task`` reads data from the remote Icecast stream
-    and appends it to a ``bytearray`` buffer.  Multiple HTTP clients can
-    request slices of the buffered data concurrently.
+    and appends it to a ``bytearray`` buffer.  The task only runs while at
+    least one HTTP client is connected — when idle, no remote connection,
+    no ``ClientSession``, and no ``TCPConnector`` exist.
 
     The buffer grows up to ``_MAX_BUFFER_SIZE`` (64 MB).  Once full, the
     oldest data is discarded.
@@ -93,7 +94,7 @@ class StreamBuffer:
         self._event = asyncio.Event()
         self._lock = asyncio.Lock()
         self._stopped = False
-        # Long-lived session + connector to avoid memory leak on reconnection
+        # Created in _run(), closed in _close_session()
         self._connector: aiohttp.TCPConnector | None = None
         self._session: aiohttp.ClientSession | None = None
 
@@ -103,6 +104,10 @@ class StreamBuffer:
 
     async def start(self) -> None:
         """Start the background buffer task."""
+        self._stopped = False
+        self._buffer = bytearray()
+        self._total_read = 0
+        self._event = asyncio.Event()
         self._task = asyncio.create_task(self._run())
 
     async def stop(self) -> None:
@@ -142,10 +147,11 @@ class StreamBuffer:
     # ------------------------------------------------------------------
 
     async def _run(self) -> None:
-        """Continuously fetch the remote stream and fill the buffer.
+        """Fetch the remote stream and fill the buffer.
 
-        Uses a single long-lived ``aiohttp.ClientSession`` to avoid
-        memory leaks from repeated session creation on reconnection.
+        Creates a fresh ``aiohttp.ClientSession`` and ``TCPConnector``
+        on each start, and closes them on exit.  This method is called
+        from ``start()`` and exits when ``stop()`` is called.
         """
         timeout = aiohttp.ClientTimeout(
             total=None,
@@ -272,7 +278,12 @@ class StreamBuffer:
 
 
 class StreamForwarder:
-    """Manages forwarding a remote stream to a single HTTP client."""
+    """Manages forwarding a remote stream to HTTP clients on demand.
+
+    The underlying ``StreamBuffer`` only runs while at least one client
+    is connected.  When the last client disconnects, the buffer is stopped
+    and all remote connection resources are freed.
+    """
 
     def __init__(self, stream_url: str, mime_type: str) -> None:
         self._stream_url = stream_url
@@ -286,12 +297,24 @@ class StreamForwarder:
         """Return number of active connections."""
         return len(self._active_connections)
 
+    async def _ensure_buffer_running(self) -> None:
+        """Start the buffer if it is not already running."""
+        if self._buffer._task is None:
+            _LOGGER.info("Starting buffer on first client connection")
+            await self._buffer.start()
+
+    async def _maybe_stop_buffer(self) -> None:
+        """Stop the buffer if no clients remain."""
+        if not self._active_connections and self._buffer._task is not None:
+            _LOGGER.info("Stopping buffer: no active clients")
+            await self._buffer.stop()
+
     async def start_buffer(self) -> None:
-        """Start the background buffer task."""
+        """Start the background buffer task (legacy/public API)."""
         await self._buffer.start()
 
     async def stop_buffer(self) -> None:
-        """Stop the background buffer task."""
+        """Stop the background buffer task (legacy/public API)."""
         await self._buffer.stop()
 
     # ------------------------------------------------------------------
@@ -304,6 +327,9 @@ class StreamForwarder:
         The stream is presented as a very large (24 h) seekable file via
         a fake ``Content-Length``.
 
+        The buffer is started on the first client connection and stopped
+        when the last client disconnects.
+
         The Reciva radio probes the file by requesting:
           1. ``bytes=0-131071`` (first 128 KB) — served from ring buffer
           2. ``bytes=<end-128>-<end>`` (last 129 bytes) — served from a
@@ -314,39 +340,54 @@ class StreamForwarder:
             request.remote,
         )
 
-        range_header = request.headers.get("Range")
+        # Track this connection before any response to ensure proper
+        # lifecycle management
+        task = asyncio.current_task()
+        assert task is not None
+        self._active_connections.add(task)
 
+        # Footer ranges don't need the buffer — serve immediately
+        range_header = request.headers.get("Range")
         if range_header:
             range_spec = self._parse_range(range_header)
             if range_spec is not None:
                 range_start, range_end = range_spec
-
                 _LOGGER.info(
                     "Range: bytes=%d-%d (file size=%d)",
                     range_start,
                     range_end,
                     _FAKE_CONTENT_LENGTH,
                 )
-
-                # Synthetic footer for end-of-file probes
                 if range_end >= _FOOTER_START:
-                    return await self._handle_footer_range(
-                        request, range_start, range_end
-                    )
+                    try:
+                        return await self._handle_footer_range(
+                            request, range_start, range_end
+                        )
+                    finally:
+                        self._active_connections.discard(task)
+                        await self._maybe_stop_buffer()
 
-                # Serve from the ring buffer
+        # Buffer data needed — ensure buffer is running
+        await self._ensure_buffer_running()
+
+        try:
+            if range_header and range_spec is not None:
+                range_start, range_end = range_spec
                 return await self._handle_buffer_range(
                     request, range_start, range_end
                 )
 
-        if range_header:
-            _LOGGER.info(
-                "Range: %s (unparseable, treating as full request)",
-                range_header,
-            )
-        _LOGGER.info("Headers: %s", dict(request.headers))
+            if range_header:
+                _LOGGER.info(
+                    "Range: %s (unparseable, treating as full request)",
+                    range_header,
+                )
+            _LOGGER.info("Headers: %s", dict(request.headers))
 
-        return await self._handle_full_stream(request)
+            return await self._handle_full_stream(request)
+        finally:
+            self._active_connections.discard(task)
+            await self._maybe_stop_buffer()
 
     @property
     def fake_content_length(self) -> int:
@@ -434,10 +475,6 @@ class StreamForwarder:
         response = StreamResponse(status=206, headers=resp_headers)
         await response.prepare(request)
 
-        task = asyncio.current_task()
-        assert task is not None
-        self._active_connections.add(task)
-
         try:
             # Read from the ring buffer in chunks
             offset = range_start
@@ -491,9 +528,6 @@ class StreamForwarder:
             _LOGGER.exception(
                 "Error serving buffer range %d-%d", range_start, range_end
             )
-        finally:
-            self._active_connections.discard(task)
-
         return response
 
     # ------------------------------------------------------------------
@@ -521,13 +555,9 @@ class StreamForwarder:
 
         await response.prepare(request)
 
-        task = asyncio.current_task()
-        assert task is not None
-        self._active_connections.add(task)
-
         bytes_sent = 0
         try:
-            while True:
+            while not self._buffer._stopped:
                 chunk = await self._buffer.read(bytes_sent, _BUFFER_SIZE)
                 if not chunk:
                     await asyncio.sleep(0.5)
@@ -556,7 +586,6 @@ class StreamForwarder:
         except Exception:
             _LOGGER.exception("Error forwarding stream")
         finally:
-            self._active_connections.discard(task)
             _LOGGER.info(
                 "=== Client disconnected (sent %d bytes) ===",
                 bytes_sent,

@@ -1,16 +1,16 @@
 # StreamForwarder & StreamBuffer Design
 
 ## Purpose
-The `StreamForwarder` handles HTTP requests to `/stream`. The `StreamBuffer` provides a persistent ring buffer that continuously reads from the remote Icecast stream. Together they present the live stream as a seekable MP3 file to DLNA clients, specifically Reciva-based internet radios.
+The `StreamForwarder` handles HTTP requests to `/stream`. The `StreamBuffer` provides an on-demand ring buffer that reads from the remote Icecast stream only while clients are connected. Together they present the live stream as a seekable MP3 file to DLNA clients, specifically Reciva-based internet radios.
 
 ## Problem
 The Reciva radio treats the stream as a file and requests ranges at increasing byte positions (`bytes=0-262143`, then `bytes=262144-393215`, etc.). Each request for position N must return the exact bytes the radio expects there. A live stream cannot satisfy this with per-request connections — the stream moves on between requests.
 
-**Solution**: Buffer the stream in a background task so all readers see the same data at each byte position.
+**Solution**: Buffer the stream in a background task so all readers see the same data at each byte position. The buffer runs **only while at least one client is connected**, freeing resources (ClientSession, TCP connection, bytearray memory) when idle.
 
 ## Class: `StreamBuffer`
 
-A persistent background ``asyncio.Task`` reads the remote stream and appends data to a ``bytearray`` protected by an ``asyncio.Lock``.
+An on-demand ``asyncio.Task`` that reads the remote stream and appends data to a ``bytearray`` protected by an ``asyncio.Lock``. The task only exists while clients are connected.
 
 ### Constructor
 ```python
@@ -21,10 +21,10 @@ StreamBuffer(stream_url: str)
 ### Lifecycle Methods
 
 #### `async start()`
-Creates a background ``asyncio.Task`` that runs `_run()`.
+Creates a background ``asyncio.Task`` that runs `_run()`. Creates a new `aiohttp.ClientSession` and `TCPConnector`.
 
 #### `async stop()`
-Cancels the background task. Called during server shutdown.
+Cancels the background task, closes the `ClientSession` and `TCPConnector`. Called when the last client disconnects or during server shutdown.
 
 ### Properties
 - `buffered_bytes -> int`: Number of bytes currently in the buffer
@@ -33,20 +33,21 @@ Cancels the background task. Called during server shutdown.
 ### Background Reader (`_run()`)
 
 ```
-loop:
-  1. Open aiohttp ClientSession + GET stream_url
-  2. Read in 64 KB chunks in a for loop
-  3. For each chunk:
-     a. Acquire lock
-     b. Extend bytearray buffer
-     c. Increment total_bytes_read
+1. Create aiohttp.ClientSession + TCPConnector
+2. loop:
+   3. GET stream_url
+   4. Read in 64 KB chunks
+   5. For each chunk:
+      a. Acquire lock
+      b. Extend bytearray buffer
+      c. Increment total_bytes_read
       d. Trim buffer if > 64 MB (delete oldest bytes)
-     e. Release lock
-     f. Set + clear asyncio.Event (wake up waiters)
-     g. asyncio.sleep(0)
-  4. On stream end: loop restarts (reconnect)
-  5. On error: log, wait 5s, retry
-  6. On cancel: return
+      e. Release lock
+      f. Set asyncio.Event (wake up waiters)
+      g. asyncio.sleep(0)
+   6. On stream end: loop restarts (reconnect)
+   7. On error: log, wait 5s, retry
+   8. On cancel or _stopped: break out, close session/connector
 ```
 
 ### Read Interface
@@ -66,32 +67,48 @@ Logic:
 
 ### Constructor
 ```python
-StreamForwarder(stream_url: str, mime_type: str)      # mime_type is required, no default
+StreamForwarder(stream_url: str, mime_type: str)
 ```
 - `stream_url`: URL of the remote internet radio stream
 - `mime_type`: MIME type of the stream (e.g. `"audio/mpeg"`; required, no default in code)
 
-Internally creates a `StreamBuffer` instance.
+Internally creates a `StreamBuffer` instance. The buffer is **not started automatically** — it starts on first client connection.
 
 ### Lifecycle Methods
 
 #### `async start_buffer()`
-Delegates to `StreamBuffer.start()`.
+Delegates to `StreamBuffer.start()`. Used during server startup for pre-warming (if desired, but typically the buffer starts on demand).
 
 #### `async stop_buffer()`
 Delegates to `StreamBuffer.stop()`.
 
+### On-Demand Buffer Lifecycle
+
+The buffer is started/stopped based on `_active_connections`:
+
+- **When `handle_request` is called**: If this is the first connection (0→1 transition), start the buffer.
+- **When a client disconnects** (`finally` block in handler): If this was the last connection (1→0 transition), stop the buffer.
+
+This ensures:
+- No remote HTTP connection while idle
+- No `ClientSession`/`TCPConnector` memory while idle
+- The bytearray buffer is freed on stop
+- Stream data is contiguous within a single client session (buffer persists while any client is connected)
+
 ### Public Methods
 
 #### `handle_request(request: Request) -> StreamResponse`
-Main entry point for incoming HTTP requests. The routing decision is:
+Main entry point for incoming HTTP requests. Manages buffer lifecycle and routing:
 
 ```
-request with Range header?
-├── YES, range is parseable?
-│   ├── range_end >= FOOTER_START?   → _handle_footer_range() (206 + synthetic)
-│   └── range_end < FOOTER_START?    → _handle_buffer_range() (206 + from buffer)
-└── NO                               → _handle_full_stream()  (200 + from buffer)
+1. Track client connection (add task to _active_connections)
+2. If _active_connections count just became 1: start the buffer
+3. Route to appropriate handler:
+   ├── Footer range (range_end >= FOOTER_START) → _handle_footer_range()
+   ├── Buffer range (range_end < FOOTER_START)  → _handle_buffer_range()
+   └── No Range header                          → _handle_full_stream()
+4. In finally: remove task from _active_connections
+5. If _active_connections count just became 0: stop the buffer
 ```
 
 Constants:
@@ -170,6 +187,8 @@ The full 129-byte footer is `\x00` + 128-byte ID3v1 tag.
 
 Each streaming task is tracked in `_active_connections: set[asyncio.Task]`. This allows:
 - Querying active connection count
+- Starting the buffer when the first client connects
+- Stopping the buffer when the last client disconnects
 - Cancelling all connections on shutdown via `cancel_all()`
 - Cleanup in `finally` blocks when connections drop
 

@@ -50,12 +50,12 @@ async def start_server(
    │
    ├── SsdpSearchResponder (responds to M-SEARCH)
    └── SsdpAdvertisementAnnouncer (sends NOTIFY every ~30s)
-   
- 5. Start Stream Buffers
-    │
-    └── for each forwarder: forwarder.start_buffer() → background ring buffer task begins reading
 
- 6. Return ServerHandle(port, responder, announcer, runner, forwarders)
+5. Return ServerHandle(port, responder, announcer, runner, forwarders)
+
+Note: Stream buffers are NOT started during server startup. Each buffer starts
+on demand when the first client connects to the corresponding stream, and stops
+when the last client disconnects. See forwarder.md for details.
 ```
 
 ### Port Auto-Assignment Bug Fix

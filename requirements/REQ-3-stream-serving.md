@@ -27,19 +27,21 @@ The server must advertise a `Content-Length` header on all stream responses, eve
 
 ---
 
-## REQ-3.2: Persistent Ring Buffer
+## REQ-3.2: On-Demand Ring Buffer
 
-**Status: 🔄 Changed**
+**Status: ✅ Implemented**
 
-A background task must continuously read the remote Icecast/Shoutcast stream into an in-memory buffer. This ensures that all concurrent HTTP requests see the same data at each byte position, regardless of when they connect.
+A background task must read the remote Icecast/Shoutcast stream into an in-memory buffer **only while at least one client is connected**. When no clients are connected, the buffer must be stopped and all remote connection resources freed. This avoids unnecessary network traffic and memory usage for idle streams.
 
 ### Details
 - The buffer is a `bytearray` (or similar mutable bytes container) protected by a lock.
-- A single background `asyncio.Task` reads from the remote stream URL in chunks (64 KB).
+- A background `asyncio.Task` reads from the remote stream URL in chunks (64 KB).
 - Data is appended to the buffer as it arrives.
 - When the buffer exceeds **64 MB**, the oldest bytes are trimmed (ring buffer behavior).
 - The buffer tracks: total bytes ever read, current bytes in buffer.
 - Support `async read(offset, size, timeout=30s)` that returns data from the buffer corresponding to the requested byte position in the "virtual file".
+- **The buffer reader must only run while at least one client is connected.** When the last client disconnects, the buffer must stop reading and close the remote connection. When a new client connects, the buffer must start reading again.
+- Buffer lifecycle is managed by the `StreamForwarder` based on `_active_connections` count: when count goes from 0→1, start the buffer; when count goes from 1→0, stop the buffer.
 
 ### Buffer Read Logic
 
