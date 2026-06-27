@@ -37,7 +37,7 @@ A background task must read the remote Icecast/Shoutcast stream into an in-memor
 - The buffer is a `bytearray` (or similar mutable bytes container) protected by a lock.
 - A background `asyncio.Task` reads from the remote stream URL in chunks (64 KB).
 - Data is appended to the buffer as it arrives.
-- When the buffer exceeds **64 MB**, the oldest bytes are trimmed (ring buffer behavior).
+- When the buffer exceeds **4 MB**, the oldest bytes are trimmed (ring buffer behavior).
 - The buffer tracks: total bytes ever read, current bytes in buffer.
 - Support `async read(offset, size, timeout=30s)` that returns data from the buffer corresponding to the requested byte position in the "virtual file".
 
@@ -131,7 +131,7 @@ Every request for the same byte position N must return the exact same bytes, reg
 
 ### Details
 - This is the fundamental reason for the ring buffer: without it, two requests for byte 0 at different times would get different data from the live stream.
-- The ring buffer must be long enough (64 MB) to cover the Reciva radio's probing and playback pattern:
+  - The ring buffer must be long enough (4 MB) to cover the Reciva radio's probing and playback pattern:
   - First ~256 KB range request (bytes 0-262143)
   - Followed by ~128 KB ranges (bytes 262144-393215, etc.)
   - Plus the end-of-file probe (last 129 bytes)

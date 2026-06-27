@@ -21,8 +21,8 @@ _BUFFER_SIZE = 64 * 1024  # 64 KB
 _CONNECT_TIMEOUT = 30
 # How long to wait for data from the remote stream before checking if client is gone
 _READ_TIMEOUT = 10
-# Maximum buffer size for cached stream data (64 MB)
-_MAX_BUFFER_SIZE = 64 * 1024 * 1024
+# Maximum buffer size for cached stream data (~1 minute of audio at 320 kbps)
+_MAX_BUFFER_SIZE = 4 * 1024 * 1024
 # Delay between reconnection attempts when the remote stream fails
 _RECONNECT_DELAY = 5
 # Grace period after last client disconnects before stopping the buffer (seconds)
@@ -84,7 +84,7 @@ class StreamBuffer:
     least one HTTP client is connected — when idle, no remote connection,
     no ``ClientSession``, and no ``TCPConnector`` exist.
 
-    The buffer grows up to ``_MAX_BUFFER_SIZE`` (64 MB).  Once full, the
+    The buffer grows up to ``_MAX_BUFFER_SIZE`` (4 MB).  Once full, the
     oldest data is discarded.
     """
 

@@ -41,7 +41,7 @@ Cancels the background task, closes the `ClientSession` and `TCPConnector`. Call
       a. Acquire lock
       b. Extend bytearray buffer
       c. Increment total_bytes_read
-      d. Trim buffer if > 64 MB (delete oldest bytes)
+      d. Trim buffer if > 4 MB (delete oldest bytes)
       e. Release lock
       f. Set asyncio.Event (wake up waiters)
       g. asyncio.sleep(0)
@@ -167,7 +167,7 @@ Returns the fake Content-Length constant (for tests).
 | `_BUFFER_SIZE` | 64 KB | Chunk size for reading remote stream |
 | `_CONNECT_TIMEOUT` | 30s | Timeout for remote stream connection |
 | `_READ_TIMEOUT` | 10s | Timeout between data reads from remote |
-| `_MAX_BUFFER_SIZE` | 64 MB | Maximum ring buffer size before trimming old data |
+| `_MAX_BUFFER_SIZE` | 4 MB | Maximum ring buffer size before trimming old data (~1 min of 320 kbps) |
 | `_FAKE_CONTENT_LENGTH` | 1,415,577,600 | 24h of 128kbps MP3 |
 | `_FOOTER_LENGTH` | 129 bytes | 1 byte (frame end) + 128 bytes (ID3v1) |
 | `_FOOTER_START` | 1,415,577,471 | Byte offset where footer begins |

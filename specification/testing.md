@@ -114,7 +114,7 @@ Multi-stream mode: legacy `/stream` returns 404 (only indexed routes exist).
 
 ## Known Gaps (Not Covered by Tests)
 - **Buffer timeout** (returns empty bytes): edge case requiring stopping the remote stream mid-test
-- **Buffer trimmed error** (ValueError): edge case requiring filling 64 MB buffer
+- **Buffer trimmed error** (ValueError): edge case requiring filling 4 MB buffer
 - **Auto-reconnect on stream failure**: the fake radio never fails, and simulating a failure is complex
 - **Startup ordering**: the fixture tests the end result (correct port in SSDP) rather than the sequence
 - **SSDP TTL = 4**: difficult to test programmatically without root on the test socket

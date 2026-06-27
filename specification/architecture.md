@@ -19,7 +19,7 @@ The core challenge: Reciva radios treat streams as **files with a fixed size**. 
                                      │  ┌──────────────────┐ │
                                      │  │  StreamBuffer    │ │
                                      │  │  (ring buffer)   │◄┼─── Internet Radio
-                                      │  │  up to 64 MB     │◄─┼─── (Icecast URL)
+                                       │  │  up to 4 MB      │◄─┼─── (Icecast URL)
                                      │  └───────┬──────────┘ │
                                      │          │            │
                                      │          ▼            │
@@ -52,7 +52,7 @@ The core challenge: Reciva radios treat streams as **files with a fixed size**. 
 The server advertises a fake `Content-Length` (~1.4 GB = 24 hours of 128 kbps MP3). Reciva radios check `Content-Length` before accepting a stream — if absent or too small, they reject it immediately.
 
 ### 2. Persistent Ring Buffer
-A background task (`StreamBuffer`) continuously reads the remote Icecast stream into a `bytearray` buffer (up to 64 MB). All HTTP requests (range or full) read from this buffer at the correct offset. This is necessary because Reciva radios request sequential byte ranges in separate TCP connections:
+A background task (`StreamBuffer`) continuously reads the remote Icecast stream into a `bytearray` buffer (up to 4 MB). All HTTP requests (range or full) read from this buffer at the correct offset. This is necessary because Reciva radios request sequential byte ranges in separate TCP connections:
 
 - `bytes=0-262143` (first 256 KB)
 - `bytes=262144-393215` (next ~128 KB)
