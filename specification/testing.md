@@ -30,9 +30,9 @@ The base URI of the running server (e.g. `http://127.0.0.1:12345`).
 - `dlna_server_multi` — full multi-stream server with 2 streams
 - `dlna_base_uri_multi` — base URI of the multi-stream server
 
-## Tests (`test_integration.py`) — 22 tests
+## Tests (`test_integration.py`) — 24 tests
 
-### Single-stream tests (14)
+### Single-stream tests (15)
 
 #### `test_reciva_dlna_stream_proxying`
 Starts the full server, makes a full-stream (200) request to `/stream`, reads 8 KB of data, verifies it matches the fake radio source data (first 8 KB of dummy data).
@@ -76,6 +76,9 @@ Fetches `/device.xml` and verifies UPnP device fields: device type, friendly nam
 #### `test_ssdp_location_port`
 Starts the server, sends an M-SEARCH query via SSDP, captures the LOCATION header from the response, and verifies the port in the URL matches the server's actual HTTP port.
 
+#### `test_buffer_trim_error_returns_416`
+Fills the ring buffer past 4 MB by injecting data directly, then sends a range request for byte offset 0 (which has been trimmed). Verifies the server returns `416 Range Not Satisfiable` with a `Content-Range: bytes */...` header.
+
 ### Multi-stream tests (8)
 
 #### `test_multi_stream_browse_direct_children`
@@ -107,14 +110,13 @@ Multi-stream mode: legacy `/stream` returns 404 (only indexed routes exist).
 | Spec file | Claims | Covered | Missing (intentionally low priority) |
 |-----------|--------|---------|--------------------------------------|
 | architecture.md | 6 key decisions | 6/6 | — |
-| forwarder.md | ~15 claims | 12/15 | Buffer timeout, trim error, auto-reconnect (edge cases) |
+| forwarder.md | ~15 claims | 13/15 | Buffer timeout, auto-reconnect (edge cases) |
 | server.md | ~15 claims | 14/15 | Search action returns empty |
 | server-lifecycle.md | ~5 claims | 3/5 | Startup ordering (hard to verify externally), SSDP TTL value |
 | radio-behavior.md | ~7 claims | 5/7 | Retry behavior (loop simulation), full 128KB probe size |
 
 ## Known Gaps (Not Covered by Tests)
 - **Buffer timeout** (returns empty bytes): edge case requiring stopping the remote stream mid-test
-- **Buffer trimmed error** (ValueError): edge case requiring filling 4 MB buffer
 - **Auto-reconnect on stream failure**: the fake radio never fails, and simulating a failure is complex
 - **Startup ordering**: the fixture tests the end result (correct port in SSDP) rather than the sequence
 - **Full 128KB probe size**: the radio probes 128KB; the test uses 16KB (limited by dummy data size)

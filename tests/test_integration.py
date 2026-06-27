@@ -736,6 +736,65 @@ async def test_ssdp_location_port(dlna_server, dlna_base_uri: str) -> None:
     )
 
 
+@pytest.mark.asyncio
+async def test_buffer_trim_error_returns_416(
+    dlna_base_uri: str,
+    stream_forwarder: StreamForwarder,
+) -> None:
+    """
+    Test that requesting a trimmed offset returns 416 Range Not Satisfiable.
+
+    After the ring buffer fills past _MAX_BUFFER_SIZE (4 MB), old data is
+    trimmed. A subsequent range request for a trimmed offset must return
+    a 416 status with a Content-Range header indicating the file size.
+
+    We fill the buffer by appending data directly, then verify that the
+    HTTP handler returns 416 when the requested offset has been trimmed.
+    """
+    from reciva_dlna_stream.forwarder import _MAX_BUFFER_SIZE
+
+    buffer = stream_forwarder._buffer
+
+    # Start the buffer and let it fetch a bit of data to be realistic
+    await buffer.start()
+
+    # Fill the buffer past _MAX_BUFFER_SIZE by injecting data directly
+    # (under the lock, as _run() would).
+    chunk_size = 64 * 1024  # Match _BUFFER_SIZE
+    target_size = _MAX_BUFFER_SIZE + chunk_size
+
+    async with buffer._lock:
+        while len(buffer._buffer) < target_size:
+            buffer._buffer.extend(b"\x00" * chunk_size)
+            buffer._total_read += chunk_size
+
+        # Now trim the buffer down to _MAX_BUFFER_SIZE (simulating
+        # what _run() does when it exceeds the max)
+        if len(buffer._buffer) > _MAX_BUFFER_SIZE:
+            excess = len(buffer._buffer) - _MAX_BUFFER_SIZE
+            del buffer._buffer[:excess]
+
+    assert buffer.total_bytes_read > _MAX_BUFFER_SIZE, (
+        f"total_bytes_read={buffer.total_bytes_read} should exceed "
+        f"_MAX_BUFFER_SIZE={_MAX_BUFFER_SIZE}"
+    )
+
+    # Request offset 0 — it should have been trimmed
+    async with ClientSession() as session:
+        async with session.get(
+            f"{dlna_base_uri}/stream",
+            headers={"Range": "bytes=0-4095"},
+            timeout=STREAM_READ_TIMEOUT,
+        ) as resp:
+            assert resp.status == 416, (
+                f"Expected 416 for trimmed offset, got {resp.status}"
+            )
+            assert resp.headers.get("Content-Range", "").startswith("bytes */"), (
+                f"Expected Content-Range: bytes */..., "
+                f"got {resp.headers.get('Content-Range')}"
+            )
+
+
 # ---------------------------------------------------------------------------
 # Multi-stream tests
 # ---------------------------------------------------------------------------
@@ -959,3 +1018,61 @@ async def test_multi_stream_no_legacy_route(
             timeout=STREAM_READ_TIMEOUT,
         ) as resp:
             assert resp.status == 404
+
+
+@pytest.mark.asyncio
+async def test_cancel_all_cleans_up_connections(
+    dlna_base_uri: str,
+    stream_forwarder: StreamForwarder,
+) -> None:
+    """
+    Verify that cancel_all() terminates all active connections and
+    clears the disconnect timer. (D-10)
+
+    Establishes multiple full-stream connections, verifies they are
+    tracked, then cancels them via cancel_all() while they are still
+    active. After cancellation the connection count must be zero and
+    no disconnect timer should be pending.
+    """
+    # Start three concurrent connections.
+    async with ClientSession() as session:
+        # We create the connections but do NOT read from them at first,
+        # so the handler tasks are still alive inside _handle_full_stream's
+        # read loop (waiting on buffer read).
+        conns = []
+        for _ in range(3):
+            resp = await session.get(
+                f"{dlna_base_uri}/stream",
+                timeout=STREAM_READ_TIMEOUT,
+            )
+            assert resp.status == 200
+            conns.append(resp)
+
+        # Verify all three connections are tracked
+        assert stream_forwarder.active_connection_count == 3, (
+            f"Expected 3 active connections, got "
+            f"{stream_forwarder.active_connection_count}"
+        )
+
+        # Cancel all connections while they are still active.
+        # This sends CancelledError into each handler task, which
+        # then discards itself from _active_connections.
+        await stream_forwarder.cancel_all()
+
+        # Allow a brief yield so cancelled tasks run their finally blocks
+        await asyncio.sleep(0)
+
+        # All connections should be cleaned up
+        assert stream_forwarder.active_connection_count == 0, (
+            f"Expected 0 active connections after cancel_all, got "
+            f"{stream_forwarder.active_connection_count}"
+        )
+
+        # No disconnect timer should be pending
+        assert not stream_forwarder.pending_disconnect, (
+            "Expected no pending disconnect timer after cancel_all"
+        )
+
+        # Clean up client-side responses
+        for resp in conns:
+            resp.close()

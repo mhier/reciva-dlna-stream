@@ -511,7 +511,11 @@ class StreamForwarder:
         range_start: int,
         range_end: int,
     ) -> StreamResponse:
-        """Serve a 206 response from the ring buffer."""
+        """Serve a 206 response from the ring buffer.
+
+        If the requested offset has been trimmed from the ring buffer,
+        returns 416 Range Not Satisfiable instead.
+        """
         _LOGGER.info(
             "Serving buffer range bytes=%d-%d",
             range_start,
@@ -519,6 +523,25 @@ class StreamForwarder:
         )
 
         content_length = range_end - range_start + 1
+
+        # Try the first read before preparing the response, so we can
+        # return 416 if the offset has been trimmed from the buffer.
+        try:
+            first_chunk = await self._buffer.read(range_start, _BUFFER_SIZE)
+        except ValueError as exc:
+            _LOGGER.warning(
+                "Buffer range error (offset trimmed): %s", exc
+            )
+            resp_headers = {
+                "Content-Type": self._mime_type,
+                "Content-Range": (
+                    f"bytes */{_FAKE_CONTENT_LENGTH}"
+                ),
+                "Accept-Ranges": "bytes",
+            }
+            response = StreamResponse(status=416, headers=resp_headers)
+            await response.prepare(request)
+            return response
 
         resp_headers = {
             "Content-Type": self._mime_type,
@@ -536,11 +559,20 @@ class StreamForwarder:
         await response.prepare(request)
 
         try:
-            # Read from the ring buffer in chunks
-            offset = range_start
-            remaining = content_length
-            bytes_sent = 0
+            # Write the first chunk (already read)
+            try:
+                await response.write(first_chunk)
+            except (ConnectionResetError, ConnectionAbortedError) as exc:
+                _LOGGER.warning(
+                    "Client disconnected during write: %s", exc
+                )
+                return response
 
+            bytes_sent = len(first_chunk)
+            offset = range_start + bytes_sent
+            remaining = content_length - bytes_sent
+
+            # Read from the ring buffer in chunks
             while remaining > 0:
                 chunk_size = min(remaining, _BUFFER_SIZE)
                 chunk = await self._buffer.read(offset, chunk_size)
@@ -582,8 +614,6 @@ class StreamForwarder:
                 range_end,
                 bytes_sent,
             )
-        except ValueError as exc:
-            _LOGGER.warning("Buffer range error: %s", exc)
         except Exception:
             _LOGGER.exception(
                 "Error serving buffer range %d-%d", range_start, range_end
@@ -675,10 +705,22 @@ class StreamForwarder:
             return start, int(end_str)
         return start, start
 
-    def cancel_all(self) -> None:
-        """Cancel all active stream forwarding tasks and the disconnect timer."""
-        if self._disconnect_timer is not None:
-            self._disconnect_timer.cancel()
-            self._disconnect_timer = None
-        for task in self._active_connections.copy():
+    async def cancel_all(self) -> None:
+        """Cancel all active stream forwarding tasks and the disconnect timer.
+
+        Properly awaits the disconnect timer cancellation so no lingering
+        tasks remain during shutdown. Also awaits the cancelled connection
+        tasks so their ``finally`` blocks (including ``_maybe_stop_buffer()``)
+        complete before cleanup finishes.
+        """
+        await self._cancel_disconnect_timer()
+        tasks = self._active_connections.copy()
+        for task in tasks:
             task.cancel()
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for result in results:
+            if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError):
+                _LOGGER.exception("Unexpected error in cancelled task", exc_info=result)
+        # The tasks' finally blocks (via _maybe_stop_buffer()) may have
+        # started a new disconnect timer. Cancel it again for clean state.
+        await self._cancel_disconnect_timer()

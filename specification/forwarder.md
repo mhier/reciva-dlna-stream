@@ -128,8 +128,13 @@ Constants:
 #### `active_connection_count -> int`
 Returns number of currently active streaming connections.
 
-#### `cancel_all()`
-Cancels all active stream forwarding tasks (used during shutdown).
+#### `async cancel_all()`
+Cancels all active stream forwarding tasks (used during shutdown). Also properly awaits the disconnect timer cancellation so no lingering tasks remain.
+
+Because the cancelled tasks' ``finally`` blocks (via ``_maybe_stop_buffer()``) can start a new disconnect timer after the initial cancellation, ``cancel_all()``:
+1. Cancels the disconnect timer first.
+2. Cancels and **awaits** all connection tasks via ``asyncio.gather()`` so their cleanup runs to completion.
+3. Cancels the disconnect timer again (in case a ``_maybe_stop_buffer()`` call started one).
 
 #### `fake_content_length -> int`
 Returns the fake Content-Length constant (for tests).
@@ -143,8 +148,9 @@ Returns the fake Content-Length constant (for tests).
 - When `read()` returns empty bytes (timeout): checks `_buffer._stopped` and breaks if the buffer was stopped; otherwise yields control via `asyncio.sleep(0)` and retries.
 
 #### `_handle_buffer_range(request, range_start, range_end) -> StreamResponse`
-- Status: `206 Partial Content`
-- Headers: Same as above plus `Content-Range: bytes start-end/total`
+- Status: `206 Partial Content` (or `416 Range Not Satisfiable` if offset trimmed)
+- If the requested byte offset has been trimmed from the ring buffer (because the buffer overflowed 4 MB and old data was discarded), returns `416` with `Content-Range: bytes */{fake_content_length}`.
+- Headers for 206: Same as above plus `Content-Range: bytes start-end/total`
 - Body: Reads from the ring buffer in chunks at the requested offset
   ```
   offset = range_start
@@ -156,6 +162,7 @@ Returns the fake Content-Length constant (for tests).
     offset += len(chunk)
     remaining -= len(chunk)
   ```
+- The first buffer read is attempted **before** preparing the response so that a `ValueError` (trimmed offset) can be caught and a 416 response returned instead of sending a 206 with no body.
 
 #### `_handle_footer_range(request, range_start, range_end) -> StreamResponse`
 - Status: `206 Partial Content`
@@ -209,6 +216,6 @@ Each streaming task is tracked in `_active_connections: set[asyncio.Task]`. This
 
 - Client disconnects mid-write: caught `ConnectionResetError`/`ConnectionAbortedError`, task exits cleanly
 - Buffer read timeout: returns empty bytes, caller sends what it has so far
-- Buffer offset trimmed: raises `ValueError`, caught and logged
+- Buffer offset trimmed: raises `ValueError`, caught and a `416 Range Not Satisfiable` response is returned with `Content-Range: bytes */{total}`
 - Remote stream connection failure in buffer: caught in `_run()` loop, retries after 5s
 - All forwarding tasks are `discard`ed from the set when they complete

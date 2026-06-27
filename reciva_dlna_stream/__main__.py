@@ -163,7 +163,7 @@ async def async_main(args: argparse.Namespace) -> None:
 
     # Cleanup: cancel active streaming tasks first, then stop buffers + SSDP
     for fwd in forwarders:
-        fwd.cancel_all()
+        await fwd.cancel_all()
     await stopper.stop()
 
 

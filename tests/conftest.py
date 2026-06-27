@@ -166,7 +166,7 @@ async def dlna_server(
     try:
         yield handle
     finally:
-        stream_forwarder.cancel_all()
+        await stream_forwarder.cancel_all()
         await handle.stop()
 
 
@@ -254,8 +254,8 @@ async def dlna_server_multi(
     try:
         yield handle
     finally:
-        stream_forwarder.cancel_all()
-        stream_forwarder_alt.cancel_all()
+        await stream_forwarder.cancel_all()
+        await stream_forwarder_alt.cancel_all()
         await handle.stop()
 
 
