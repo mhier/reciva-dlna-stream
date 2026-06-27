@@ -72,7 +72,12 @@ StreamForwarder(stream_url: str, mime_type: str)
 - `stream_url`: URL of the remote internet radio stream
 - `mime_type`: MIME type of the stream (e.g. `"audio/mpeg"`; required, no default in code)
 
-Internally creates a `StreamBuffer` instance. The buffer is **not started automatically** — it starts on first client connection.
+Internally creates a `StreamBuffer` instance. The buffer is **not started automatically** — it starts on first client connection. Also creates a `_disconnect_timer: asyncio.Task | None` for the grace period.
+
+### Properties
+- `active_connection_count -> int`: Number of currently active streaming connections.
+- `fake_content_length -> int`: The fake Content-Length constant.
+- `pending_disconnect -> bool`: Whether a disconnect timer is pending (grace period active).
 
 ### Lifecycle Methods
 
@@ -82,18 +87,19 @@ Delegates to `StreamBuffer.start()`. Used during server startup for pre-warming 
 #### `async stop_buffer()`
 Delegates to `StreamBuffer.stop()`.
 
-### On-Demand Buffer Lifecycle
+### On-Demand Buffer Lifecycle with Grace Period
 
-The buffer is started/stopped based on `_active_connections`:
+The buffer is started/stopped based on `_active_connections` and a configurable grace period:
 
-- **When `handle_request` is called**: If this is the first connection (0→1 transition), start the buffer.
-- **When a client disconnects** (`finally` block in handler): If this was the last connection (1→0 transition), stop the buffer.
+- **When `handle_request` is called**: If this is the first connection, ensure the buffer is running and cancel any pending disconnect timer (grace period).
+- **When a client disconnects** (`finally` block in handler): If this was the last connection, start a **disconnect timer** with the grace period timeout (default: 10 seconds) instead of stopping the buffer immediately.
+- **When the disconnect timer fires**: Stop the buffer (close remote connection, free resources).
+- **When a new client connects while the timer is pending**: Cancel the timer, buffer keeps running.
 
 This ensures:
-- No remote HTTP connection while idle
-- No `ClientSession`/`TCPConnector` memory while idle
-- The bytearray buffer is freed on stop
-- Stream data is contiguous within a single client session (buffer persists while any client is connected)
+- The ring buffer accumulates data continuously while any client is active.
+- After the last client disconnects, the buffer persists for 10 seconds in case the client reconnects (common Reciva behavior during re-buffering or sequential range requests).
+- Remote connection resources are eventually freed after the grace period expires.
 
 ### Public Methods
 
@@ -102,13 +108,15 @@ Main entry point for incoming HTTP requests. Manages buffer lifecycle and routin
 
 ```
 1. Track client connection (add task to _active_connections)
-2. If _active_connections count just became 1: start the buffer
-3. Route to appropriate handler:
+2. Cancel any pending disconnect timer (grace period)
+3. If buffer is not running: start the buffer
+4. Route to appropriate handler:
    ├── Footer range (range_end >= FOOTER_START) → _handle_footer_range()
    ├── Buffer range (range_end < FOOTER_START)  → _handle_buffer_range()
    └── No Range header                          → _handle_full_stream()
-4. In finally: remove task from _active_connections
-5. If _active_connections count just became 0: stop the buffer
+5. In finally: remove task from _active_connections
+6. If _active_connections is now empty: start the disconnect timer
+   (buffer continues running during the grace period)
 ```
 
 Constants:
@@ -163,6 +171,7 @@ Returns the fake Content-Length constant (for tests).
 | `_FAKE_CONTENT_LENGTH` | 1,415,577,600 | 24h of 128kbps MP3 |
 | `_FOOTER_LENGTH` | 129 bytes | 1 byte (frame end) + 128 bytes (ID3v1) |
 | `_FOOTER_START` | 1,415,577,471 | Byte offset where footer begins |
+| `_DISCONNECT_TIMEOUT` | 10s | Grace period after last client disconnects |
 
 ## Synthetic Footer Design
 

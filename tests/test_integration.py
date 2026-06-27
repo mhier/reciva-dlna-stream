@@ -145,10 +145,12 @@ async def test_reciva_dlna_stream_proxying(
 @pytest.mark.asyncio
 async def test_stream_stops_when_no_clients(
     dlna_base_uri: str,
+    stream_forwarder: StreamForwarder,
 ) -> None:
     """
     Verify that no active stream connections exist after a client
-    disconnects. The StreamForwarder should clean up its task set.
+    disconnects, and the buffer is eventually stopped after the
+    grace period.
     """
     # Read a small chunk then disconnect
     async with ClientSession() as session:
@@ -156,13 +158,30 @@ async def test_stream_stops_when_no_clients(
             chunk = await resp.content.readexactly(1024)
             assert len(chunk) == 1024
 
-    # Give the forwarder time to clean up
+    # Give the forwarder time to clean up the connection
     await asyncio.sleep(0.5)
 
-    # The forwarder is accessible through the server device.
-    # We can verify by fetching /stream again — it should work fine
-    # (new connection). The main assertion is that the old connection
-    # is cleaned up properly (no unclosed tasks).
+    # The buffer should still be running (grace period)
+    assert stream_forwarder.pending_disconnect, (
+        "Disconnect timer should be pending during grace period"
+    )
+    assert stream_forwarder._buffer._task is not None, (
+        "Buffer should still be running during grace period"
+    )
+
+    # Wait for the grace period to expire
+    from reciva_dlna_stream.forwarder import _DISCONNECT_TIMEOUT
+    await asyncio.sleep(_DISCONNECT_TIMEOUT + 1)
+
+    # Buffer should now be stopped
+    assert not stream_forwarder.pending_disconnect, (
+        "Disconnect timer should have expired"
+    )
+    assert stream_forwarder._buffer._task is None, (
+        "Buffer should be stopped after grace period"
+    )
+
+    # A new connection should work fine
     async with ClientSession() as session:
         async with session.get(f"{dlna_base_uri}/stream", timeout=STREAM_READ_TIMEOUT) as resp:
             chunk = await resp.content.readexactly(512)
@@ -369,6 +388,62 @@ async def test_data_consistency_across_connections(
         "Data at byte offset 0 must be identical across connections"
     )
     assert data1 == dummy_mp3_data[:range_size]
+
+
+@pytest.mark.asyncio
+async def test_buffer_persists_across_sequential_connections(
+    dlna_base_uri: str,
+    dummy_mp3_data: bytes,
+    stream_forwarder: StreamForwarder,
+) -> None:
+    """
+    Verify that the buffer persists across sequential connections within
+    the grace period. This simulates the Reciva radio pattern where it
+    connects, disconnects, and reconnects for the next range quickly.
+    """
+    from reciva_dlna_stream.forwarder import _DISCONNECT_TIMEOUT
+
+    # First connection: request a range
+    range1_size = 4096
+    async with ClientSession() as session:
+        async with session.get(
+            f"{dlna_base_uri}/stream",
+            headers={"Range": f"bytes=0-{range1_size - 1}"},
+            timeout=STREAM_READ_TIMEOUT,
+        ) as resp:
+            assert resp.status == 206
+            data1 = await resp.content.readexactly(range1_size)
+
+    # Buffer should still be alive (grace period)
+    assert stream_forwarder._buffer._task is not None, (
+        "Buffer should still run during grace period"
+    )
+    assert stream_forwarder._buffer.total_bytes_read > 0, (
+        "Buffer should have read data"
+    )
+
+    # Second connection within grace period: request same range
+    async with ClientSession() as session:
+        async with session.get(
+            f"{dlna_base_uri}/stream",
+            headers={"Range": f"bytes=0-{range1_size - 1}"},
+            timeout=STREAM_READ_TIMEOUT,
+        ) as resp:
+            assert resp.status == 206
+            data2 = await resp.content.readexactly(range1_size)
+
+    # Both connections must see the same data (buffer consistency)
+    assert data1 == data2, (
+        "Data must be identical across connections within grace period"
+    )
+    assert data1 == dummy_mp3_data[:range1_size]
+
+    # Let grace period expire, then verify new data is from a new buffer instance
+    await asyncio.sleep(_DISCONNECT_TIMEOUT + 1)
+
+    assert stream_forwarder._buffer._task is None, (
+        "Buffer should be stopped after grace period"
+    )
 
 
 @pytest.mark.asyncio

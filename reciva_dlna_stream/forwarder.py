@@ -25,6 +25,8 @@ _READ_TIMEOUT = 10
 _MAX_BUFFER_SIZE = 64 * 1024 * 1024
 # Delay between reconnection attempts when the remote stream fails
 _RECONNECT_DELAY = 5
+# Grace period after last client disconnects before stopping the buffer (seconds)
+_DISCONNECT_TIMEOUT = 10
 
 # ---------------------------------------------------------------------------
 # Fake content length for the live stream
@@ -280,9 +282,11 @@ class StreamBuffer:
 class StreamForwarder:
     """Manages forwarding a remote stream to HTTP clients on demand.
 
-    The underlying ``StreamBuffer`` only runs while at least one client
-    is connected.  When the last client disconnects, the buffer is stopped
-    and all remote connection resources are freed.
+    The underlying ``StreamBuffer`` runs while at least one client
+    is connected, plus a grace period (``_DISCONNECT_TIMEOUT``)
+    after the last client disconnects. This allows quick reconnections
+    (e.g. sequential range requests or re-buffering) without losing
+    the accumulated buffer data.
     """
 
     def __init__(self, stream_url: str, mime_type: str) -> None:
@@ -291,23 +295,71 @@ class StreamForwarder:
         self._buffer = StreamBuffer(stream_url)
 
         self._active_connections: set[asyncio.Task[None]] = set()
+        self._disconnect_timer: asyncio.Task[None] | None = None
 
     @property
     def active_connection_count(self) -> int:
         """Return number of active connections."""
         return len(self._active_connections)
 
+    @property
+    def pending_disconnect(self) -> bool:
+        """Whether a disconnect timer is pending (grace period active)."""
+        return self._disconnect_timer is not None and not self._disconnect_timer.done()
+
     async def _ensure_buffer_running(self) -> None:
-        """Start the buffer if it is not already running."""
+        """Start the buffer if it is not already running.
+
+        Also cancels any pending disconnect timer so the buffer
+        continues serving data uninterrupted.
+        """
+        await self._cancel_disconnect_timer()
         if self._buffer._task is None:
             _LOGGER.info("Starting buffer on first client connection")
             await self._buffer.start()
 
+    async def _cancel_disconnect_timer(self) -> None:
+        """Cancel the pending disconnect timer, if any."""
+        if self._disconnect_timer is not None and not self._disconnect_timer.done():
+            self._disconnect_timer.cancel()
+            try:
+                await self._disconnect_timer
+            except asyncio.CancelledError:
+                pass
+            self._disconnect_timer = None
+
     async def _maybe_stop_buffer(self) -> None:
-        """Stop the buffer if no clients remain."""
-        if not self._active_connections and self._buffer._task is not None:
-            _LOGGER.info("Stopping buffer: no active clients")
-            await self._buffer.stop()
+        """Start a disconnect timer if no clients remain.
+
+        Instead of stopping the buffer immediately, this starts
+        a grace period timer. The buffer keeps running and
+        accumulating data. If a new client connects before the
+        timer fires, the timer is cancelled. If the timer fires,
+        the buffer is stopped.
+        """
+        if self._active_connections or self._disconnect_timer is not None:
+            return
+        _LOGGER.info(
+            "No active clients, starting disconnect timer (%ds)",
+            _DISCONNECT_TIMEOUT,
+        )
+        self._disconnect_timer = asyncio.create_task(
+            self._disconnect_timer_task()
+        )
+
+    async def _disconnect_timer_task(self) -> None:
+        """Wait for the grace period, then stop the buffer."""
+        try:
+            await asyncio.sleep(_DISCONNECT_TIMEOUT)
+            if not self._active_connections:
+                _LOGGER.info(
+                    "Disconnect timer expired: stopping buffer"
+                )
+                await self._buffer.stop()
+        except asyncio.CancelledError:
+            pass
+        finally:
+            self._disconnect_timer = None
 
     async def start_buffer(self) -> None:
         """Start the background buffer task (legacy/public API)."""
@@ -612,6 +664,9 @@ class StreamForwarder:
         return start, start
 
     def cancel_all(self) -> None:
-        """Cancel all active stream forwarding tasks."""
+        """Cancel all active stream forwarding tasks and the disconnect timer."""
+        if self._disconnect_timer is not None:
+            self._disconnect_timer.cancel()
+            self._disconnect_timer = None
         for task in self._active_connections.copy():
             task.cancel()

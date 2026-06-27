@@ -27,11 +27,11 @@ The server must advertise a `Content-Length` header on all stream responses, eve
 
 ---
 
-## REQ-3.2: On-Demand Ring Buffer
+## REQ-3.2: Persistent Ring Buffer with Grace Period
 
 **Status: ✅ Implemented**
 
-A background task must read the remote Icecast/Shoutcast stream into an in-memory buffer **only while at least one client is connected**. When no clients are connected, the buffer must be stopped and all remote connection resources freed. This avoids unnecessary network traffic and memory usage for idle streams.
+A background task must read the remote Icecast/Shoutcast stream into an in-memory ring buffer. The buffer must persist for a configurable grace period after all clients disconnect, maintaining its accumulated data so that reconnecting clients get consistent data. This prevents the "re-buffering → disconnect" cycle seen when the buffer stops immediately after each range request completes.
 
 ### Details
 - The buffer is a `bytearray` (or similar mutable bytes container) protected by a lock.
@@ -40,8 +40,21 @@ A background task must read the remote Icecast/Shoutcast stream into an in-memor
 - When the buffer exceeds **64 MB**, the oldest bytes are trimmed (ring buffer behavior).
 - The buffer tracks: total bytes ever read, current bytes in buffer.
 - Support `async read(offset, size, timeout=30s)` that returns data from the buffer corresponding to the requested byte position in the "virtual file".
-- **The buffer reader must only run while at least one client is connected.** When the last client disconnects, the buffer must stop reading and close the remote connection. When a new client connects, the buffer must start reading again.
-- Buffer lifecycle is managed by the `StreamForwarder` based on `_active_connections` count: when count goes from 0→1, start the buffer; when count goes from 1→0, stop the buffer.
+
+### Grace Period (Keep-Alive Timeout)
+- **When the last client disconnects**, the buffer must NOT stop immediately.
+- Instead, the buffer enters a **grace period** (default: **10 seconds**) during which:
+  - The buffer continues running (remote stream keeps reading, data keeps accumulating in the ring buffer).
+  - If a new client connects during the grace period, the buffer continues uninterrupted (grace period is cancelled).
+  - If no client connects before the grace period expires, the buffer is stopped and all remote connection resources are freed.
+- Buffer lifecycle is managed by the `StreamForwarder` based on `_active_connections` count and a new `_disconnect_timer`:
+  - When count goes from 0→1 (or any client is active): cancel any pending disconnect timer.
+  - When count goes from 1→0 (last client disconnects): start the disconnect timer with the grace period timeout.
+  - When the timer fires: stop the buffer.
+- This ensures:
+  - No gap in stream data when the client reconnects quickly (e.g. sequential range requests or re-buffering).
+  - Remote connection resources are still freed after a reasonable idle period.
+  - The accumulated ring buffer data is available for the reconnecting client.
 
 ### Buffer Read Logic
 
