@@ -31,6 +31,7 @@ from async_upnp_client.server import (
 )
 from async_upnp_client.ssdp import SsdpProtocol, build_ssdp_packet
 
+from .forwarder import StreamForwarder
 from .stream_config import StreamConfig
 
 _LOGGER = logging.getLogger(__name__)
@@ -91,7 +92,7 @@ class ServerHandle:
         search_responder: SsdpSearchResponder,
         advertisement_announcer: SsdpAdvertisementAnnouncer,
         runner: AppRunner,
-        forwarders: Sequence[object],
+        forwarders: Sequence[StreamForwarder],
     ) -> None:
         self.port = port
         self._search_responder = search_responder
@@ -102,8 +103,7 @@ class ServerHandle:
     async def stop(self) -> None:
         """Stop all stream buffers, SSDP, then HTTP."""
         for fwd in self._forwarders:
-            if hasattr(fwd, 'stop_buffer'):
-                await fwd.stop_buffer()
+            await fwd.stop_buffer()
         await self._advertisement_announcer.async_stop()
         await self._search_responder.async_stop()
         await self._runner.cleanup()
@@ -116,7 +116,7 @@ async def start_server(
     http_bind: str,
     http_port: int,
     streams: list[StreamConfig],
-    forwarders: Sequence[object],
+    forwarders: Sequence[StreamForwarder],
 ) -> ServerHandle:
     """Start HTTP + SSDP, ensuring SSDP LOCATION has the correct port.
 

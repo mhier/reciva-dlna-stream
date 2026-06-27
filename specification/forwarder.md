@@ -29,6 +29,7 @@ Cancels the background task, closes the `ClientSession` and `TCPConnector`. Call
 ### Properties
 - `buffered_bytes -> int`: Number of bytes currently in the buffer
 - `total_bytes_read -> int`: Total bytes ever read from the remote stream (buffer may have been trimmed)
+- `is_running -> bool`: Whether the buffer background task is currently running
 
 ### Background Reader (`_run()`)
 
@@ -183,7 +184,9 @@ Offset  Length  Content
 3       30      Title (null-padded) → "Internet Radio"
 33      30      Artist (null-padded) → empty
 63      30      Album (null-padded) → empty
-93      4       Year → "2026"
+| `_CURRENT_YEAR` | `datetime.datetime.now().year` | Computed at import time, encoded as ASCII, used in ID3v1 tag |
+
+93      4       Year → current year (computed at import time)
 97      28      Comment (null-padded)
 125     1       Null separator (0x00 = ID3v1.1)
 126     1       Track number → 1

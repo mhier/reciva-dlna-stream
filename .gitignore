@@ -22,3 +22,6 @@ Thumbs.db
 
 # Environment
 .env
+
+# Debt register
+debts.md

@@ -165,7 +165,7 @@ async def test_stream_stops_when_no_clients(
     assert stream_forwarder.pending_disconnect, (
         "Disconnect timer should be pending during grace period"
     )
-    assert stream_forwarder._buffer._task is not None, (
+    assert stream_forwarder._buffer.is_running, (
         "Buffer should still be running during grace period"
     )
 
@@ -177,7 +177,7 @@ async def test_stream_stops_when_no_clients(
     assert not stream_forwarder.pending_disconnect, (
         "Disconnect timer should have expired"
     )
-    assert stream_forwarder._buffer._task is None, (
+    assert not stream_forwarder._buffer.is_running, (
         "Buffer should be stopped after grace period"
     )
 
@@ -415,7 +415,7 @@ async def test_buffer_persists_across_sequential_connections(
             data1 = await resp.content.readexactly(range1_size)
 
     # Buffer should still be alive (grace period)
-    assert stream_forwarder._buffer._task is not None, (
+    assert stream_forwarder._buffer.is_running, (
         "Buffer should still run during grace period"
     )
     assert stream_forwarder._buffer.total_bytes_read > 0, (
@@ -441,7 +441,7 @@ async def test_buffer_persists_across_sequential_connections(
     # Let grace period expire, then verify new data is from a new buffer instance
     await asyncio.sleep(_DISCONNECT_TIMEOUT + 1)
 
-    assert stream_forwarder._buffer._task is None, (
+    assert not stream_forwarder._buffer.is_running, (
         "Buffer should be stopped after grace period"
     )
 

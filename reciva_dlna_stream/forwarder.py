@@ -7,6 +7,7 @@ The remote connection is only active while a client is connected.
 from __future__ import annotations
 
 import asyncio
+import datetime
 import logging
 import re
 
@@ -54,12 +55,14 @@ _DLNA_TRANSFER_MODE = "Streaming"
 # with no real end, we serve a synthetic ID3v1.1 tag for any range that
 # intersects the last 128 bytes of our fake file size.
 # ---------------------------------------------------------------------------
+_CURRENT_YEAR = str(datetime.datetime.now().year).encode("ascii")
+
 _ID3V1_TAG = (
     b"TAG"
     + b"Internet Radio\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
     + b"\x00" * 30  # Artist
     + b"\x00" * 30  # Album
-    + b"2026"       # Year
+    + _CURRENT_YEAR  # Year
     + b"\x00" * 28  # Comment (null-padded)
     + b"\x00"       # v1.1 separator
     + b"\x01"       # Track 1
@@ -141,8 +144,13 @@ class StreamBuffer:
 
     @property
     def total_bytes_read(self) -> int:
-        """Return total bytes ever read from the remote stream."""
+        """Total bytes ever read from the remote stream (may have been trimmed)."""
         return self._total_read
+
+    @property
+    def is_running(self) -> bool:
+        """Whether the buffer background task is currently running."""
+        return self._task is not None
 
     # ------------------------------------------------------------------
     # Background reader
@@ -314,7 +322,7 @@ class StreamForwarder:
         continues serving data uninterrupted.
         """
         await self._cancel_disconnect_timer()
-        if self._buffer._task is None:
+        if not self._buffer.is_running:
             _LOGGER.info("Starting buffer on first client connection")
             await self._buffer.start()
 

@@ -73,7 +73,7 @@ The issue with the upstream library: `UpnpServer.async_start()` calls `_create_d
 
 ### Attributes
 - `port: int` — The actual HTTP server port
-- `_forwarders: list[object]` — All StreamForwarder instances (for buffer lifecycle)
+- `_forwarders: list[StreamForwarder]` — All StreamForwarder instances (for buffer lifecycle)
 - `_search_responder` — SSDP search responder
 - `_advertisement_announcer` — SSDP advertisement announcer
 - `_runner` — aiohttp AppRunner
