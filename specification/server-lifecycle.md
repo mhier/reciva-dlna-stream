@@ -78,6 +78,15 @@ The issue with the upstream library: `UpnpServer.async_start()` calls `_create_d
 - `_advertisement_announcer` — SSDP advertisement announcer
 - `_runner` — aiohttp AppRunner
 
+### Properties
+
+#### `ssdp_location_url: str`
+Returns the SSDP LOCATION URL that the server advertises in its NOTIFY and M-SEARCH responses. Derived from the SsdpSearchResponder's device configuration:
+- `device.base_uri` — the base URI (`http://IP:PORT`)
+- `device.device_url` — the device XML path (`/device.xml`)
+
+No network I/O involved — this reads the internal device configuration that the SSDP responder uses to build its response packets.
+
 ### Methods
 
 #### `async stop()`

@@ -100,6 +100,20 @@ class ServerHandle:
         self._runner = runner
         self._forwarders = list(forwarders)
 
+    @property
+    def ssdp_location_url(self) -> str:
+        """Return the SSDP LOCATION URL that the server advertises.
+
+        This is the URL that SSDP NOTIFY and M-SEARCH responses include
+        in their ``LOCATION`` header. It is derived from the device's
+        ``base_uri`` and ``device_url``, both of which are set during
+        ``start_server()`` to ensure the port is correct (not 0).
+        """
+        return (
+            f"{self._search_responder.device.base_uri}"
+            f"{self._search_responder.device.device_url}"
+        )
+
     async def stop(self) -> None:
         """Stop all stream buffers, SSDP, then HTTP."""
         for fwd in self._forwarders:

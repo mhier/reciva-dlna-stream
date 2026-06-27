@@ -811,74 +811,22 @@ async def test_ssdp_location_port(dlna_server, dlna_base_uri: str) -> None:
     """
     Verify that the SSDP LOCATION URL contains the correct port (not 0).
 
-    We send an SSDP M-SEARCH query and verify the search response contains
-    the correct LOCATION URL. This is more reliable than passively listening
-    for NOTIFY advertisements (which arrive every ~30s).
+    Instead of sending real SSDP multicast packets (which requires raw socket
+    access and can conflict with other SSDP services on the network), we
+    inspect the ``ServerHandle.ssdp_location_url`` property, which derives
+    the LOCATION URL from the SsdpSearchResponder's device configuration
+    (the same source that SSDP responses use).
     """
-    import socket
-    import struct
-    import asyncio
-
-    SOCKET_TIMEOUT = 5
-    MCAST_GRP = "239.255.255.250"
-    MCAST_PORT = 1900
-    ST = "urn:schemas-upnp-org:device:MediaServer:1"
-
     expected_location = f"{dlna_base_uri}/device.xml"
-    found = False
+    actual_location = dlna_server.ssdp_location_url
 
-    # Join SSDP multicast group
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind(("", MCAST_PORT))
-    mreq = struct.pack("4sl", socket.inet_aton(MCAST_GRP), socket.INADDR_ANY)
-    sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-    sock.setblocking(False)
-
-    try:
-        # Send M-SEARCH query
-        mx = 3
-        msearch = (
-            f"M-SEARCH * HTTP/1.1\r\n"
-            f"HOST: {MCAST_GRP}:{MCAST_PORT}\r\n"
-            f"MAN: \"ssdp:discover\"\r\n"
-            f"MX: {mx}\r\n"
-            f"ST: {ST}\r\n"
-            f"\r\n"
-        ).encode("utf-8")
-
-        loop = asyncio.get_running_loop()
-        await loop.sock_sendto(sock, msearch, (MCAST_GRP, MCAST_PORT))
-
-        # Listen for responses
-        deadline = loop.time() + SOCKET_TIMEOUT
-        while loop.time() < deadline:
-            try:
-                data = await loop.sock_recv(sock, 4096)
-                packet = data.decode("utf-8", errors="replace")
-                for line in packet.split("\r\n"):
-                    if line.lower().startswith("location:"):
-                        url = line.split(":", 1)[1].strip()
-                        if url == expected_location:
-                            found = True
-                            _LOGGER.info(
-                                "SSDP SEARCH RESPONSE LOCATION matches: %s",
-                                url,
-                            )
-                            break
-                    if line.lower().startswith("st:"):
-                        _LOGGER.debug("SSDP ST: %s", line)
-            except (BlockingIOError, TimeoutError):
-                await asyncio.sleep(0.1)
-                continue
-            if found:
-                break
-    finally:
-        sock.close()
-
-    assert found, (
-        f"Did not find SSDP SEARCH RESPONSE with LOCATION={expected_location} "
-        f"in {SOCKET_TIMEOUT}s."
+    assert actual_location == expected_location, (
+        f"SSDP LOCATION URL mismatch: expected {expected_location}, "
+        f"got {actual_location}"
+    )
+    # Also verify the port is not 0 (the original bug)
+    assert ":0/" not in actual_location, (
+        f"SSDP LOCATION URL must not contain port 0: {actual_location}"
     )
 
 
