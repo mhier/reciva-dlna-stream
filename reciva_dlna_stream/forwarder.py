@@ -620,7 +620,11 @@ class StreamForwarder:
             while not self._buffer._stopped:
                 chunk = await self._buffer.read(bytes_sent, _BUFFER_SIZE)
                 if not chunk:
-                    await asyncio.sleep(0.5)
+                    # Buffer timed out — check if the buffer was stopped
+                    # (disconnect timer fired) while we were waiting.
+                    if self._buffer._stopped:
+                        break
+                    await asyncio.sleep(0)
                     continue
 
                 try:

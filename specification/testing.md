@@ -117,7 +117,6 @@ Multi-stream mode: legacy `/stream` returns 404 (only indexed routes exist).
 - **Buffer trimmed error** (ValueError): edge case requiring filling 4 MB buffer
 - **Auto-reconnect on stream failure**: the fake radio never fails, and simulating a failure is complex
 - **Startup ordering**: the fixture tests the end result (correct port in SSDP) rather than the sequence
-- **SSDP TTL = 4**: difficult to test programmatically without root on the test socket
 - **Full 128KB probe size**: the radio probes 128KB; the test uses 16KB (limited by dummy data size)
 
 ## Fixture Lifecycle

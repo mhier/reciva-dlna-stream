@@ -139,7 +139,8 @@ Returns the fake Content-Length constant (for tests).
 #### `_handle_full_stream(request) -> StreamResponse`
 - Status: `200 OK`
 - Headers: `Content-Type`, `Content-Length` (fake), `Accept-Ranges: bytes`, `TransferMode.DLNA.ORG: Streaming`, `Cache-Control: no-cache`, `Content-Disposition`
-- Body: Reads sequentially from the ring buffer (`_buffer.read(bytes_sent, _BUFFER_SIZE)`), sending data indefinitely until client disconnects
+- Body: Reads sequentially from the ring buffer (`_buffer.read(bytes_sent, _BUFFER_SIZE)`), sending data indefinitely until client disconnects or the buffer stops (disconnect timer expires).
+- When `read()` returns empty bytes (timeout): checks `_buffer._stopped` and breaks if the buffer was stopped; otherwise yields control via `asyncio.sleep(0)` and retries.
 
 #### `_handle_buffer_range(request, range_start, range_end) -> StreamResponse`
 - Status: `206 Partial Content`

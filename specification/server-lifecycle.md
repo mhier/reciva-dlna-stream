@@ -114,9 +114,6 @@ Shutdown sequence:
 7. Wait for SIGINT/SIGTERM
 8. Call `ServerHandle.stop()` to cleanly shut down (all buffers → SSDP → HTTP)
 
-### SSDP TTL Monkey-Patch
-The `async_upnp_client` library hard-codes SSDP multicast TTL = 2, but UPnP Device Architecture v2.0 mandates TTL = 4. The monkey-patch in `__main__.py` overrides `get_ssdp_socket()` to set `IP_MULTICAST_TTL = 4` on the SSDP socket.
-
 ### SSDP NOTIFY: `FastSsdpAdvertisementAnnouncer`
 
 The upstream `SsdpAdvertisementAnnouncer` cycles through NT/USN pairs, sending **one** per interval (~5 entries, 30s each → ~150s full cycle). Reciva radios seem to only respond to specific NT/USN entries (e.g. `upnp:rootdevice`), so they miss the server for multiple cycles.

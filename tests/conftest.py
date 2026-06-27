@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import socket
 from typing import AsyncIterator
 from uuid import uuid4
 
@@ -15,25 +14,6 @@ from reciva_dlna_stream.forwarder import StreamForwarder
 from reciva_dlna_stream.server import MediaServerDevice
 from reciva_dlna_stream.server_lifecycle import ServerHandle, start_server
 from reciva_dlna_stream.stream_config import StreamConfig
-
-# ---------------------------------------------------------------------------
-# Apply the SSDP TTL monkey-patch (TTL 4 per UPnP spec, library uses 2)
-# ---------------------------------------------------------------------------
-import async_upnp_client.ssdp as _ssdp_module
-
-_orig_get_ssdp_socket = _ssdp_module.get_ssdp_socket
-
-
-def _patched_get_ssdp_socket(*args, **kwargs):
-    sock, src, tgt = _orig_get_ssdp_socket(*args, **kwargs)
-    try:
-        sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 4)
-    except OSError:
-        pass
-    return sock, src, tgt
-
-
-_ssdp_module.get_ssdp_socket = _patched_get_ssdp_socket
 
 # ---------------------------------------------------------------------------
 # Constants

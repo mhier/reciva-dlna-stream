@@ -7,7 +7,7 @@
 | REQ-1.3 | M-SEARCH Response | ✅ Implemented |
 | REQ-1.4 | Device Description XML | ✅ Implemented |
 | REQ-1.5 | Correct LOCATION URL | ✅ Implemented |
-| REQ-1.6 | SSDP TTL | ✅ Implemented |
+| REQ-1.6 | SSDP TTL | ❌ Not applicable |
 
 ---
 
@@ -86,10 +86,11 @@ The SSDP LOCATION URL must contain the correct IP and port of the HTTP server.
 
 ## REQ-1.6: SSDP TTL
 
-**Status: ✅ Implemented**
+**Status: ❌ Not applicable**
 
-The SSDP multicast TTL must be 4 (UPnP Device Architecture v2.0 requirement), not the default 2 from the upstream library.
+The SSDP multicast TTL was previously set to 4 (UPnP Device Architecture v2.0 requirement) via a monkey-patch. The patch has been removed because:
 
-### Details
-- The `async_upnp_client` library hard-codes TTL=2, which does not comply with UPnP Device Architecture v2.0.
-- The server must monkey-patch `get_ssdp_socket()` to set `IP_MULTICAST_TTL = 4`.
+- On single-subnet deployments (no routers between server and client), TTL 2 works fine.
+- The monkey-patch was fragile (patching library internals).
+- The upstream library's default TTL of 2 is sufficient for all known Reciva radio use cases.
+- If multi-hop SSDP propagation is ever needed, the library default should be configured through a proper upstream setting rather than a monkey-patch.

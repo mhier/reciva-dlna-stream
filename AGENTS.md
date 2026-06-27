@@ -182,7 +182,6 @@ requirements/
 - No other runtime dependencies
 
 ### SSDP
-- TTL is monkey-patched from 2 → 4 to comply with UPnP Device Architecture v2.0
 - The `async_upnp_client.SsdpAdvertisementAnnouncer` sends NOTIFY every 30s
 - `SsdpSearchResponder` responds to M-SEARCH immediately
 - The `async_upnp_client.SsdpSearchResponder` option `ssdp_search_responder_always_rootdevice` is set to `True`

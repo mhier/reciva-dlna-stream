@@ -21,27 +21,6 @@ from .server import MediaServerDevice
 from .server_lifecycle import ServerHandle, start_server
 from .stream_config import ServerConfig, StreamConfig, load_config
 
-# ---------------------------------------------------------------------------
-# Monkey-patch: increase SSDP multicast TTL from 2 to 4
-#
-# The UPnP Device Architecture v2.0 (section 1.2.2) mandates a TTL of 4 for
-# SSDP multicast messages. The library hard-codes 2.
-# ---------------------------------------------------------------------------
-import async_upnp_client.ssdp as _ssdp_module
-_orig_get_ssdp_socket = _ssdp_module.get_ssdp_socket
-
-
-def _patched_get_ssdp_socket(*args, **kwargs):
-    sock, src, tgt = _orig_get_ssdp_socket(*args, **kwargs)
-    try:
-        sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 4)
-    except OSError:
-        pass
-    return sock, src, tgt
-
-
-_ssdp_module.get_ssdp_socket = _patched_get_ssdp_socket
-
 _LOGGER = logging.getLogger("reciva_dlna_stream")
 
 
