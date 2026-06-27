@@ -1,4 +1,0 @@
-[bash]
-allow = [
-    ".venv/bin/python *",
-]

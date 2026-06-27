@@ -237,15 +237,26 @@ class ContentDirectoryService(UpnpServerService):
             StreamConfig(url="", name="Internet Radio", mime_type="audio/mpeg"),
         ]
         self._host_url: str = ""
+        self._friendly_name: str = "Internet Radio"
 
     def configure(
         self,
         streams: list[StreamConfig],
         host_url: str,
+        friendly_name: str = "",
     ) -> None:
-        """Configure stream entries."""
+        """Configure stream entries.
+
+        Args:
+            streams: The list of stream configurations.
+            host_url: The base URL for stream item URLs.
+            friendly_name: The device's friendly name, used for the
+                root container title.
+        """
         self._streams = streams
         self._host_url = host_url
+        if friendly_name:
+            self._friendly_name = friendly_name
 
     # pylint: disable=invalid-name,unused-argument
 
@@ -313,7 +324,7 @@ class ContentDirectoryService(UpnpServerService):
 
         if ObjectID == "0" and BrowseFlag == "BrowseMetadata":
             # Root container metadata
-            title = (self._streams[0].name if self._streams else "Streams")
+            title = self._friendly_name
             child_count = len(self._streams)
             result = _build_didl_container(
                 "0", "-1", title, child_count,
@@ -519,11 +530,11 @@ class ConnectionManagerService(UpnpServerService):
     def __init__(self, requester: UpnpRequester) -> None:
         """Initialize."""
         super().__init__(requester)
-        self._mime_type: str = "audio/mpeg"
+        self._mime_types: list[str] = ["audio/mpeg"]
 
-    def configure(self, mime_type: str) -> None:
-        """Configure."""
-        self._mime_type = mime_type
+    def configure(self, mime_types: list[str]) -> None:
+        """Configure with all stream MIME types."""
+        self._mime_types = list(mime_types) if mime_types else ["audio/mpeg"]
 
     # pylint: disable=invalid-name,unused-argument
 
@@ -535,7 +546,11 @@ class ConnectionManagerService(UpnpServerService):
     async def get_protocol_info(self) -> dict[str, UpnpStateVariable]:
         """Get protocol info."""
         source = self.state_variable("SourceProtocolInfo")
-        source.upnp_value = f"http-get:*:{self._mime_type}:*"
+        # Return all MIME types as comma-separated protocol info strings
+        protocol_strings = ",".join(
+            f"http-get:*:{mt}:*" for mt in self._mime_types
+        )
+        source.upnp_value = protocol_strings
         sink = self.state_variable("SinkProtocolInfo")
         sink.upnp_value = ""
         return {
@@ -569,10 +584,13 @@ class ConnectionManagerService(UpnpServerService):
         self, ConnectionID: int
     ) -> dict[str, UpnpStateVariable]:
         """Get current connection info."""
+        protocol_strings = ",".join(
+            f"http-get:*:{mt}:*" for mt in self._mime_types
+        )
         return {
             "RcsID": -1,
             "AVTransportID": -1,
-            "ProtocolInfo": f"http-get:*:{self._mime_type}:*",
+            "ProtocolInfo": protocol_strings,
             "PeerConnectionManager": "",
             "PeerConnectionID": -1,
             "Direction": "Output",
@@ -666,8 +684,12 @@ class MediaServerDevice(UpnpServerDevice):
         """Configure services with stream details after creation."""
         for service in self.all_services:
             if isinstance(service, ContentDirectoryService):
-                service.configure(streams=streams, host_url=host_url)
+                service.configure(
+                    streams=streams,
+                    host_url=host_url,
+                    friendly_name=self.DEVICE_DEFINITION.friendly_name,
+                )
             elif isinstance(service, ConnectionManagerService):
-                # Use the first stream's mime type as the default
-                mime = streams[0].mime_type if streams else "audio/mpeg"
-                service.configure(mime_type=mime)
+                # Collect all MIME types for multi-stream support
+                mime_types = [s.mime_type for s in streams] if streams else ["audio/mpeg"]
+                service.configure(mime_types=mime_types)

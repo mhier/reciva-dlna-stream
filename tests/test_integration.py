@@ -574,6 +574,152 @@ async def test_connection_manager_actions(
             assert "<Direction>Output</Direction>" in text
 
 
+# ---------------------------------------------------------------------------
+# Multi-stream ConnectionManager (D-15)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_connection_manager_multi_mime(
+    dlna_base_uri_multi: str,
+    dlna_http_port: int,
+) -> None:
+    """Test that GetProtocolInfo returns all MIME types in multi-stream mode.
+
+    The multi-stream fixture uses two streams both with audio/mpeg, so
+    the expected output is a single protocol info entry (no duplicates
+    needed - we just verify the format is correct for multi-stream).
+    The comma-separated format works even with identical MIME types.
+    """
+    body = (
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"'
+        ' s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">'
+        '<s:Body>'
+        '<u:GetProtocolInfo xmlns:u="urn:schemas-upnp-org:service:ConnectionManager:1">'
+        '</u:GetProtocolInfo>'
+        '</s:Body>'
+        '</s:Envelope>'
+    ).encode("utf-8")
+
+    async with ClientSession() as session:
+        async with session.post(
+            f"{dlna_base_uri_multi}/upnp/control/ConnectionManager1",
+            data=body,
+            headers={
+                "SOAPACTION": '"urn:schemas-upnp-org:service:ConnectionManager:1#GetProtocolInfo"',
+                "Content-Type": "text/xml; charset=utf-8",
+            },
+            timeout=STREAM_READ_TIMEOUT,
+        ) as resp:
+            assert resp.status == 200
+            text = await resp.text()
+            # Both streams use audio/mpeg, so we expect one or two entries
+            assert "http-get:*:audio/mpeg:*" in text
+
+
+@pytest.mark.asyncio
+async def test_connection_manager_multi_mime_distinct(
+    fake_radio_url: str,
+    dlna_http_port: int,
+) -> None:
+    """Test GetProtocolInfo with streams having distinct MIME types.
+
+    Sets up two streams with different MIME types and verifies both
+    appear as comma-separated protocol info entries.
+    """
+    import xml.etree.ElementTree as ET
+    from uuid import uuid4
+    from aiohttp.web import RouteDef
+
+    from reciva_dlna_stream.forwarder import StreamForwarder
+    from reciva_dlna_stream.server import MediaServerDevice
+    from reciva_dlna_stream.server_lifecycle import start_server
+    from reciva_dlna_stream.stream_config import StreamConfig
+
+    # Create forwarders with different MIME types
+    fwd_mpeg = StreamForwarder(stream_url=fake_radio_url, mime_type="audio/mpeg")
+    fwd_ogg = StreamForwarder(stream_url=fake_radio_url, mime_type="audio/ogg")
+
+    streams = [
+        StreamConfig(url=fake_radio_url, name="MP3 Stream", mime_type="audio/mpeg"),
+        StreamConfig(url=fake_radio_url, name="OGG Stream", mime_type="audio/ogg"),
+    ]
+    forwarders = [fwd_mpeg, fwd_ogg]
+
+    udn = f"uuid:{uuid4()}"
+
+    class DistinctMimeDevice(MediaServerDevice):
+        """A MediaServerDevice with two streams of different MIME types."""
+
+        DEVICE_DEFINITION = MediaServerDevice.DEVICE_DEFINITION._replace(
+            udn=udn,
+            friendly_name="Distinct MIME Test",
+        )
+
+        def __init__(
+            self,
+            requester: object,
+            base_uri: str,
+            boot_id: int = 1,
+            config_id: int = 1,
+        ) -> None:
+            """Initialize and attach forwarders."""
+            super().__init__(
+                requester=requester,
+                base_uri=base_uri,
+                boot_id=boot_id,
+                config_id=config_id,
+            )
+            self.set_forwarders(forwarders)
+
+    handle = await start_server(
+        device_class=DistinctMimeDevice,
+        local_ip="127.0.0.1",
+        http_bind="127.0.0.1",
+        http_port=dlna_http_port,
+        streams=streams,
+        forwarders=forwarders,
+    )
+
+    try:
+        body = (
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"'
+            ' s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">'
+            '<s:Body>'
+            '<u:GetProtocolInfo xmlns:u="urn:schemas-upnp-org:service:ConnectionManager:1">'
+            '</u:GetProtocolInfo>'
+            '</s:Body>'
+            '</s:Envelope>'
+        ).encode("utf-8")
+
+        async with ClientSession() as session:
+            async with session.post(
+                f"http://127.0.0.1:{handle.port}/upnp/control/ConnectionManager1",
+                data=body,
+                headers={
+                    "SOAPACTION": '"urn:schemas-upnp-org:service:ConnectionManager:1#GetProtocolInfo"',
+                    "Content-Type": "text/xml; charset=utf-8",
+                },
+                timeout=STREAM_READ_TIMEOUT,
+            ) as resp:
+                assert resp.status == 200
+                text = await resp.text()
+                # Both MIME types should appear in the response
+                assert "http-get:*:audio/mpeg:*" in text
+                assert "http-get:*:audio/ogg:*" in text
+                # They should be comma-separated
+                assert (
+                    "http-get:*:audio/mpeg:*,http-get:*:audio/ogg:*" in text
+                    or "http-get:*:audio/ogg:*,http-get:*:audio/mpeg:*" in text
+                )
+    finally:
+        await fwd_mpeg.cancel_all()
+        await fwd_ogg.cancel_all()
+        await handle.stop()
+
+
 @pytest.mark.asyncio
 async def test_search_action_returns_empty(
     dlna_base_uri: str,

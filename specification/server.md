@@ -42,6 +42,8 @@ Convenience wrapper — delegates to `set_forwarders([forwarder])`.
 
 #### `configure_services(streams: list[StreamConfig], host_url: str)`
 Iterates all services and calls their `configure()` with the full stream list.
+Passes `friendly_name` from `DEVICE_DEFINITION.friendly_name` to `ContentDirectoryService.configure()`.
+Passes all stream MIME types (as a `list[str]`) to `ConnectionManagerService.configure()`, enabling multi-stream MIME type reporting.
 
 ## Service: `ContentDirectoryService`
 
@@ -86,9 +88,15 @@ Standard ContentDirectory actions, return empty/default values.
 #### `Search(ContainerID, ...)`
 Not implemented. Returns empty result (`NumberReturned=0, TotalMatches=0`).
 
-## Service: `ConnectionManagerService`
+#### `configure(streams, host_url, friendly_name)`
 
-### DIDL-Lite XML Structure
+Called during device setup to wire stream data into the service.
+
+- `streams: list[StreamConfig]` — the configured streams, each with name, URL, MIME type.
+- `host_url: str` — base URL for building stream item URLs (`{host_url}/stream/{id}`).
+- `friendly_name: str` — the device's friendly name, used as the root container title.
+
+## Service: `ConnectionManagerService` (ConnectionManager:1)
 
 Browse result for "BrowseDirectChildren" (example with 2 streams):
 ```xml
@@ -112,11 +120,13 @@ Container metadata (here with 2 streams):
 ```xml
 <DIDL-Lite ...>
   <container id="0" parentID="-1" restricted="true" childCount="2">
-    <dc:title>Deutschlandfunk</dc:title>
+    <dc:title>Internet Radio Stream</dc:title>
     <upnp:class>object.container</upnp:class>
   </container>
 </DIDL-Lite>
 ```
+
+The container title is always the device's `friendly_name`, never a stream name.
 
 ## Service: `ConnectionManagerService`
 
@@ -126,16 +136,37 @@ Container metadata (here with 2 streams):
 - Event sub URL: `/upnp/event/ConnectionManager1`
 - SCPD URL: `/ConnectionManager_1.xml`
 
+### Internal State
+
+- `_mime_types: list[str]` — all stream MIME types, default `["audio/mpeg"]`.
+
+### configure(mime_types: list[str])
+
+Stores all MIME types. Called once during device setup via `configure_services()`.
+
 ### Actions
 
 #### `GetProtocolInfo()`
-Returns `Source: http-get:*:audio/mpeg:*` and `Sink: ""`.
+Returns `SourceProtocolInfo` with all MIME types as comma-separated protocol info strings.
+
+For example, with two streams (`audio/mpeg` and `audio/ogg`):
+```
+Source: http-get:*:audio/mpeg:*,http-get:*:audio/ogg:*
+Sink: ""
+```
+
+With a single stream (single `audio/mpeg`):
+```
+Source: http-get:*:audio/mpeg:*
+Sink: ""
+```
 
 #### `GetCurrentConnectionIDs()`
 Returns `ConnectionIDs: "0"`.
 
 #### `GetCurrentConnectionInfo(ConnectionID)`
-Returns dummy info with Status="OK", Direction="Output", ProtocolInfo="http-get:*:audio/mpeg:*".
+Returns dummy info with Status="OK", Direction="Output".
+`ProtocolInfo` contains all MIME types as comma-separated protocol info strings (same format as `GetProtocolInfo`).
 
 ## UDN Generation
 

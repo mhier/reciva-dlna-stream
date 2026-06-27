@@ -15,6 +15,7 @@ venv/
 # IDE
 .vscode/
 .idea/
+.maki/
 
 # OS
 .DS_Store
