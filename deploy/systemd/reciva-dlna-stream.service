@@ -10,6 +10,9 @@ ExecStart=@ENTRY_POINT@ $CLI_ARGS
 Restart=on-failure
 RestartSec=5s
 PrivateTmp=yes
+WorkingDirectory=/var/lib/reciva-dlna-stream
+User=reciva-dlna
+Group=reciva-dlna
 NoNewPrivileges=yes
 
 [Install]

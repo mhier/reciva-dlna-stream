@@ -12,6 +12,8 @@
 | REQ-6.8 | Install Script — Virtual Environment Installation | ✅ Implemented |
 | REQ-6.9 | Install Script — Systemd Service Registration | ✅ Implemented |
 | REQ-6.10 | Install Script — Default Config Setup | ✅ Implemented |
+| REQ-6.11 | Non-Root Service User | ✅ Implemented |
+| REQ-6.12 | Install Script — Idempotency | ✅ Implemented |
 
 ---
 
@@ -27,6 +29,7 @@ The project must ship a `reciva-dlna-stream.service` systemd unit file that star
 - The unit must not contain hardcoded stream URLs or configuration — all runtime arguments are supplied via the environment file (REQ-6.2).
 - The unit must define a `[Unit]` section with a Description and a `[Service]` section with the execution command, and an `[Install]` section for enablement.
 - The `ExecStart` command uses an `@ENTRY_POINT@` placeholder which the install script replaces with the absolute path to the venv entry point. The `$CLI_ARGS` variable is expanded from the environment file.
+- The unit file must hardcode `User=reciva-dlna` and `Group=reciva-dlna` to run the service under a dedicated system user (see REQ-6.11).
 
 ---
 
@@ -42,7 +45,7 @@ The `.service` file must use `EnvironmentFile=/etc/default/reciva-dlna-stream` t
 - A template environment file must be shipped in `deploy/systemd/reciva-dlna-stream.default` with all supported CLI arguments documented and commented out.
 - Supported CLI arguments that may appear in `CLI_ARGS`: `--stream-url`, `--config`, `--port`, `--bind-ip`, `--name`, `--mime-type`, `--verbose`.
 - The path to the entry point binary is NOT defined in the environment file. Instead, it is substituted directly into the systemd unit file at install time via the `@ENTRY_POINT@` placeholder mechanism.
-- The environment file may also optionally define `USER` and `GROUP` variables to specify the system user/group under which the service runs.
+- The environment file does not define `USER` or `GROUP` — the service user/group is hardcoded in the systemd unit file directly (see REQ-6.11).
 
 ---
 
@@ -155,3 +158,42 @@ After installation, the example config file must be placed at the standard confi
 - It shall be installed to `/usr/local/etc/reciva-dlna-stream/config.json` (dropping the `example-` prefix).
 - The installation script must also update the environment file (`/etc/default/reciva-dlna-stream`) so that the default `CLI_ARGS` references this config file (the `--config` option pointing to `/usr/local/etc/reciva-dlna-stream/config.json`).
 - This means the service can be started immediately after installation (the user only needs to edit the config if they want different streams).
+
+---
+
+## REQ-6.11: Non-Root Service User
+
+**Status: ✅ Implemented**
+
+The server must run under a dedicated non-root system user (`reciva-dlna`) instead of running as root.
+
+### Details
+- The systemd unit file must set `User=reciva-dlna` and `Group=reciva-dlna` in the `[Service]` section.
+- The install script must create the system user and group if they do not already exist.
+- User creation: `useradd --system --no-create-home --gid reciva-dlna --home-dir /var/lib/reciva-dlna-stream --comment "Reciva DLNA Stream Server" reciva-dlna`
+- Group creation: `groupadd --system reciva-dlna`
+- A state directory at `/var/lib/reciva-dlna-stream/` must be created and owned by `reciva-dlna:reciva-dlna` with permissions `750`.
+- The install script must set ownership of all installed files:
+  - `/usr/local/lib/reciva-dlna/` (venv) → `reciva-dlna:reciva-dlna`
+  - `/usr/local/etc/reciva-dlna-stream/` (config) → `reciva-dlna:reciva-dlna`
+  - `/etc/systemd/system/reciva-dlna-stream.service` → `root:reciva-dlna`
+  - `/etc/default/reciva-dlna-stream` → `root:reciva-dlna`
+  - `/var/lib/reciva-dlna-stream/` (state dir) → `reciva-dlna:reciva-dlna`
+- The systemd unit file must also set `WorkingDirectory=/var/lib/reciva-dlna-stream` so the service's working directory is the state dir.
+
+---
+
+## REQ-6.12: Install Script — Idempotency
+
+**Status: ✅ Implemented**
+
+The install script must be idempotent — re-running it must be safe and should only create or fix what is missing or incorrect.
+
+### Details
+- User/group creation must check existence (e.g. `getent passwd` / `getent group`) before attempting to create.
+- State directory creation must check existence (`[ -d "$STATE_DIR" ]`) before creating.
+- File copy operations with `cp` are not idempotent internally but will overwrite with the latest version (acceptable for upgrades).
+- `chown`/`chmod` operations are safe to re-run as they re-apply the same permissions.
+- `systemctl daemon-reload` and `systemctl enable` are idempotent by design.
+- Important variables like user/group names, paths, and comments must not change between runs (remain constant via variable references).
+- All operations that could fail on re-run must be guarded (e.g. `getent` check before `useradd`).

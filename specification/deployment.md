@@ -25,6 +25,9 @@ ExecStart=@ENTRY_POINT@ $CLI_ARGS
 Restart=on-failure
 RestartSec=5s
 PrivateTmp=yes
+WorkingDirectory=/var/lib/reciva-dlna-stream
+User=reciva-dlna
+Group=reciva-dlna
 NoNewPrivileges=yes
 
 [Install]
@@ -45,21 +48,28 @@ WantedBy=multi-user.target
 
 6. **`PrivateTmp=yes`** — Provides a private `/tmp` and `/var/tmp` namespace for the service, a moderate hardening measure.
 
-7. **`NoNewPrivileges=yes`** — Prevents the service and its children from gaining new privileges via `setuid`/`setgid` binaries or `capability` syscalls.
+7. **`WorkingDirectory=/var/lib/reciva-dlna-stream`** — Sets the working directory to the service's state directory. This directory exists on the filesystem as the user's home and can be used for any runtime state files if needed in the future.
 
-8. **No `StandardOutput=`/`StandardError=`** — systemd captures stdout/stderr into the journal by default. The server already logs via Python's `logging` module which writes to stderr.
+8. **`User=reciva-dlna` / `Group=reciva-dlna`** — The service runs under a dedicated system user and group instead of root. The install script creates these automatically. This limits the security impact should the service be compromised.
+
+9. **`NoNewPrivileges=yes`** — Prevents the service and its children from gaining new privileges via `setuid`/`setgid` binaries or `capability` syscalls.
+
+10. **No `StandardOutput=`/`StandardError=`** — systemd captures stdout/stderr into the journal by default. The server already logs via Python's `logging` module which writes to stderr.
 
 ### User/Group Configuration
 
-The unit file does not hardcode `User=` or `Group=`. These can optionally be set in the environment file via `USER` and `GROUP` variables, but the unit file itself does not reference them. If a non-root user is desired, the administrator should:
+The service runs under the `reciva-dlna` system user and group. These are created automatically by the install script and hardcoded into the systemd unit file via `User=` and `Group=` directives. No administrator intervention is required.
 
-1. Create a system user: `sudo useradd --system --no-create-home reciva-dlna`
-2. In `/etc/systemd/system/reciva-dlna-stream.service.d/override.conf` (or via `systemctl edit`), add:
-   ```
-   [Service]
-   User=reciva-dlna
-   Group=reciva-dlna
-   ```
+- The user is created with `--system --no-create-home` and its home directory set to `/var/lib/reciva-dlna-stream`.
+- The group is also named `reciva-dlna` and is the user's primary group.
+- Ownership of installed files:
+  - `/usr/local/lib/reciva-dlna/` (venv) → `reciva-dlna:reciva-dlna`
+  - `/usr/local/etc/reciva-dlna-stream/` (config) → `reciva-dlna:reciva-dlna`
+  - `/etc/systemd/system/reciva-dlna-stream.service` → `root:reciva-dlna`
+  - `/etc/default/reciva-dlna-stream` → `root:reciva-dlna`
+  - `/var/lib/reciva-dlna-stream/` (state dir) → `reciva-dlna:reciva-dlna`
+
+The user/group creation is idempotent: `getent` is used to check existence before calling `groupadd`/`useradd`.
 
 ## Environment File
 
@@ -74,10 +84,8 @@ The file is a shell script sourced by systemd. It defines:
 | Variable | Required | Description |
 |---|---|---|
 | `CLI_ARGS` | Yes | All CLI arguments passed to the server. See below for examples. |
-| `USER` | No | System user to run the service as (requires a drop-in override in the unit). |
-| `GROUP` | No | System group to run the service as (requires a drop-in override in the unit). |
 
-Note: The binary path (`RECIVA_DLNA_BIN`) is no longer an environment variable. It is substituted directly into the systemd unit file at install time via the `@ENTRY_POINT@` placeholder mechanism.
+Note: The binary path (`RECIVA_DLNA_BIN`) is substituted directly into the systemd unit file at install time via the `@ENTRY_POINT@` placeholder mechanism.
 
 ### CLI_ARGS Examples
 
@@ -133,19 +141,38 @@ The project ships `deploy/install.sh` — a single bash script that fully instal
 
 ### Behavior
 
-| Step | Action | Detail |
-|------|--------|--------|
-| 1 | Root check | Refuse to run unless `EUID` is 0. Print error and exit 1 if not root. |
-| 2 | Virtual environment creation | Create `/usr/local/lib/reciva-dlna-stream/venv/` using `python3 -m venv`. |
-| 3 | Python package install | Run `${VENV_DIR}/bin/pip install .` from the repository root to install into the venv. |
-| 4 | Systemd unit install with placeholder substitution | Copy `deploy/systemd/reciva-dlna-stream.service` → `/etc/systemd/system/reciva-dlna-stream.service`, then replace `@ENTRY_POINT@` with the actual venv binary path using `sed`. |
-| 5 | Environment file install | Copy `deploy/systemd/reciva-dlna-stream.default` → `/etc/default/reciva-dlna-stream`. |
-| 6 | Config directory setup | Create `/usr/local/etc/reciva-dlna-stream/` (if not present). |
-| 7 | Default config install | Copy `example-config.json` → `/usr/local/etc/reciva-dlna-stream/config.json` (renamed from `example-` prefix). |
-| 8 | Default CLI_ARGS in env file | Enable the `--config` line in `/etc/default/reciva-dlna-stream` pointing to `/usr/local/etc/reciva-dlna-stream/config.json`. The script does this by uncommenting and editing the appropriate line in place. |
-| 9 | Daemon reload | Run `systemctl daemon-reload`. |
-| 10 | Enable service | Run `systemctl enable reciva-dlna-stream`. |
-| 11 | Print success message | Notify the user that installation is complete and they should edit config and start the service. |
+| Step | Action | Detail | Idempotent? |
+|------|--------|--------|-------------|
+| 1 | Root check | Refuse to run unless `EUID` is 0. Print error and exit 1 if not root. | — |
+| 2 | System user/group creation | Create the `reciva-dlna` system user and group using `groupadd --system` + `useradd --system`. Checks with `getent` first to skip if already exists. | ✅ |
+| 3 | State directory creation | Create `/var/lib/reciva-dlna-stream/` as the user's home directory. Checked with `[ -d ]` to skip if exists. | ✅ |
+| 4 | Virtual environment creation | Create `/usr/local/lib/reciva-dlna-stream/venv/` using `python3 -m venv`. | No (overwrites) |
+| 5 | Python package install | Run `${VENV_DIR}/bin/pip install .` from the repository root to install into the venv. | No (re-installs) |
+| 6 | Systemd unit install with placeholder substitution | Copy `deploy/systemd/reciva-dlna-stream.service` → `/etc/systemd/system/reciva-dlna-stream.service`, then replace `@ENTRY_POINT@` with the actual venv binary path using `sed`. | No (overwrites) |
+| 7 | Environment file install | Copy `deploy/systemd/reciva-dlna-stream.default` → `/etc/default/reciva-dlna-stream`. | No (overwrites) |
+| 8 | Config directory setup | Create `/usr/local/etc/reciva-dlna-stream/` (if not present). | ✅ (mkdir -p) |
+| 9 | Default config install | Copy `example-config.json` → `/usr/local/etc/reciva-dlna-stream/config.json` (renamed from `example-` prefix). | No (overwrites) |
+| 10 | Default CLI_ARGS in env file | Enable the `--config` line in `/etc/default/reciva-dlna-stream` pointing to `/usr/local/etc/reciva-dlna-stream/config.json`. The script does this by uncommenting and editing the appropriate line in place. | No (re-applies) |
+| 11 | Daemon reload | Run `systemctl daemon-reload`. | ✅ (safe) |
+| 12 | Enable service | Run `systemctl enable reciva-dlna-stream`. | ✅ (idempotent) |
+| 13 | Fix file ownership | `chown -R` venv and config dirs to `reciva-dlna:reciva-dlna`; set unit/env file ownership to `root:reciva-dlna` with `chmod 644`. | ✅ (re-applies same) |
+
+### Idempotency
+
+The install script is designed to be re-runnable. Operations that skip or safely re-apply:
+
+| Check | Behavior on re-run |
+|---|---|
+| User/group exists (`getent`) | Skipped |
+| State directory exists (`[ -d ]`) | Skipped |
+| `mkdir -p` | No-op if exists |
+| File copy with `cp` | Overwrites (may update to newer version) |
+| `sed -i` config substitution | Re-applies the same line |
+| `systemctl daemon-reload` | Safe to run repeatedly |
+| `systemctl enable` | Idempotent by design |
+| `chown` / `chmod` | Re-applies same permissions |
+
+This means administrators can re-run `deploy/install.sh` after pulling an updated repository to upgrade the service.
 
 ### Root Check
 
@@ -169,6 +196,7 @@ The install script follows the GNU coding standards for directory layout:
 | `/usr/local/share/reciva-dlna-stream/` | Reserved for supporting data files (future use) |
 | `/etc/systemd/system/reciva-dlna-stream.service` | Systemd unit file |
 | `/etc/default/reciva-dlna-stream` | Environment file with CLI_ARGS |
+| `/var/lib/reciva-dlna-stream/` | Service state directory (home of the `reciva-dlna` user) |
 
 ### Pre-Installation Requirements
 
@@ -185,11 +213,15 @@ The script does NOT start the service — the user should edit the config files 
 sudo deploy/install.sh
 # Output:
 # [*] Installing reciva-dlna-stream...
+# [*] System group created: reciva-dlna
+# [*] System user created: reciva-dlna
+# [*] State directory created: /var/lib/reciva-dlna-stream
 # [*] Python package installed.
 # [*] Systemd unit installed.
 # [*] Environment file installed.
 # [*] Default config installed at /usr/local/etc/reciva-dlna-stream/config.json
 # [*] Service reciva-dlna-stream enabled.
+# [*] File ownership set.
 # [*] Installation complete!
 #
 # Next steps:
