@@ -40,7 +40,7 @@ loop:
      a. Acquire lock
      b. Extend bytearray buffer
      c. Increment total_bytes_read
-     d. Trim buffer if > 512 MB (delete oldest bytes)
+      d. Trim buffer if > 64 MB (delete oldest bytes)
      e. Release lock
      f. Set + clear asyncio.Event (wake up waiters)
      g. asyncio.sleep(0)
@@ -66,10 +66,10 @@ Logic:
 
 ### Constructor
 ```python
-StreamForwarder(stream_url: str, mime_type: str)
+StreamForwarder(stream_url: str, mime_type: str)      # mime_type is required, no default
 ```
 - `stream_url`: URL of the remote internet radio stream
-- `mime_type`: MIME type of the stream (default: `audio/mpeg`)
+- `mime_type`: MIME type of the stream (e.g. `"audio/mpeg"`; required, no default in code)
 
 Internally creates a `StreamBuffer` instance.
 
@@ -142,7 +142,7 @@ Returns the fake Content-Length constant (for tests).
 | `_BUFFER_SIZE` | 64 KB | Chunk size for reading remote stream |
 | `_CONNECT_TIMEOUT` | 30s | Timeout for remote stream connection |
 | `_READ_TIMEOUT` | 10s | Timeout between data reads from remote |
-| `_MAX_BUFFER_SIZE` | 512 MB | Maximum ring buffer size before trimming old data |
+| `_MAX_BUFFER_SIZE` | 64 MB | Maximum ring buffer size before trimming old data |
 | `_FAKE_CONTENT_LENGTH` | 1,415,577,600 | 24h of 128kbps MP3 |
 | `_FOOTER_LENGTH` | 129 bytes | 1 byte (frame end) + 128 bytes (ID3v1) |
 | `_FOOTER_START` | 1,415,577,471 | Byte offset where footer begins |

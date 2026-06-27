@@ -30,35 +30,76 @@ The base URI of the running server (e.g. `http://127.0.0.1:12345`).
 - `dlna_server_multi` — full multi-stream server with 2 streams
 - `dlna_base_uri_multi` — base URI of the multi-stream server
 
-## Tests (`test_integration.py`)
+## Tests (`test_integration.py`) — 22 tests
 
-### `test_reciva_dlna_stream_proxying`
-...
-### `test_ssdp_location_port`
-...
+### Single-stream tests (14)
 
-### `test_multi_stream_browse_direct_children`
+#### `test_reciva_dlna_stream_proxying`
+Starts the full server, makes a full-stream (200) request to `/stream`, reads 8 KB of data, verifies it matches the fake radio source data (first 8 KB of dummy data).
+
+#### `test_stream_stops_when_no_clients`
+Verifies that the stream does not block indefinitely after clients disconnect — the forwarder can be started and stopped cleanly.
+
+#### `test_browse_metadata`
+Calls `Browse("0", "BrowseMetadata")` via SOAP POST — verifies container metadata in DIDL-Lite response.
+
+#### `test_range_request`
+Sends `Range: bytes=0-1023` to `/stream` — verifies 206 status, Content-Range header, and exact byte match.
+
+#### `test_end_of_file_range_request`
+Sends `Range: bytes=<footer_start>-<footer_end>` — verifies 206 status and the synthetic ID3v1.1 footer bytes.
+
+#### `test_active_connection_count`
+Sends three concurrent range requests — verifies active connection count reaches 3 then drops to 0.
+
+#### `test_fake_content_length_property`
+Verifies `StreamForwarder.fake_content_length` property returns the expected value.
+
+#### `test_full_stream_response_headers`
+Initiates a full (200) stream, checks response headers: `Content-Type`, `Content-Length`, `Accept-Ranges`, `TransferMode.DLNA.ORG`, `Cache-Control`, `Content-Disposition`.
+
+#### `test_data_consistency_across_connections`
+Two separate connections each request `bytes=0-4095` — verifies they get identical data.
+
+#### `test_multi_chunk_range_request`
+Range request for `bytes=0-16383` spanning multiple buffer chunks — verifies all 16 KB are returned correctly.
+
+#### `test_connection_manager_actions`
+Calls all three ConnectionManager SOAP actions (`GetProtocolInfo`, `GetCurrentConnectionIDs`, `GetCurrentConnectionInfo`) — verifies correct response values.
+
+#### `test_search_action_returns_empty`
+Calls the ContentDirectory `Search` action — verifies `Result=""`, `NumberReturned=0`, `TotalMatches=0`.
+
+#### `test_device_xml_valid`
+Fetches `/device.xml` and verifies UPnP device fields: device type, friendly name, manufacturer, model name, service list (ContentDirectory, ConnectionManager), SCPD/control/event URLs.
+
+#### `test_ssdp_location_port`
+Starts the server, sends an M-SEARCH query via SSDP, captures the LOCATION header from the response, and verifies the port in the URL matches the server's actual HTTP port.
+
+### Multi-stream tests (8)
+
+#### `test_multi_stream_browse_direct_children`
 Multi-stream mode: Browse children of root — verify 2 items returned with correct URLs (`/stream/0`, `/stream/1`) and titles.
 
-### `test_multi_stream_browse_metadata_root`
+#### `test_multi_stream_browse_metadata_root`
 Multi-stream mode: BrowseMetadata on root container — verify `childCount == "2"`.
 
-### `test_multi_stream_browse_item_metadata`
+#### `test_multi_stream_browse_item_metadata`
 Multi-stream mode: BrowseMetadata on item "1" — verify title and URL for second stream.
 
-### `test_multi_stream_range_request`
+#### `test_multi_stream_range_request`
 Multi-stream mode: Range requests to `/stream/0` and `/stream/1` — both return correct 206 data.
 
-### `test_multi_stream_full_request`
+#### `test_multi_stream_full_request`
 Multi-stream mode: Full (200) requests to `/stream/0` and `/stream/1`.
 
-### `test_multi_stream_end_of_file`
+#### `test_multi_stream_end_of_file`
 Multi-stream mode: Synthetic footer served at `/stream/0` and `/stream/1`.
 
-### `test_single_stream_backward_compat_route`
+#### `test_single_stream_backward_compat_route`
 Single-stream mode: legacy `/stream` works as alias.
 
-### `test_multi_stream_no_legacy_route`
+#### `test_multi_stream_no_legacy_route`
 Multi-stream mode: legacy `/stream` returns 404 (only indexed routes exist).
 
 ## Coverage Summary
@@ -73,7 +114,7 @@ Multi-stream mode: legacy `/stream` returns 404 (only indexed routes exist).
 
 ## Known Gaps (Not Covered by Tests)
 - **Buffer timeout** (returns empty bytes): edge case requiring stopping the remote stream mid-test
-- **Buffer trimmed error** (ValueError): edge case requiring filling 512 MB buffer
+- **Buffer trimmed error** (ValueError): edge case requiring filling 64 MB buffer
 - **Auto-reconnect on stream failure**: the fake radio never fails, and simulating a failure is complex
 - **Startup ordering**: the fixture tests the end result (correct port in SSDP) rather than the sequence
 - **SSDP TTL = 4**: difficult to test programmatically without root on the test socket

@@ -21,8 +21,8 @@ _BUFFER_SIZE = 64 * 1024  # 64 KB
 _CONNECT_TIMEOUT = 30
 # How long to wait for data from the remote stream before checking if client is gone
 _READ_TIMEOUT = 10
-# Maximum buffer size for cached stream data (512 MB)
-_MAX_BUFFER_SIZE = 512 * 1024 * 1024
+# Maximum buffer size for cached stream data (64 MB)
+_MAX_BUFFER_SIZE = 64 * 1024 * 1024
 
 # ---------------------------------------------------------------------------
 # Fake content length for the live stream
@@ -79,7 +79,7 @@ class StreamBuffer:
     and appends it to a ``bytearray`` buffer.  Multiple HTTP clients can
     request slices of the buffered data concurrently.
 
-    The buffer grows up to ``_MAX_BUFFER_SIZE`` (512 MB).  Once full, the
+    The buffer grows up to ``_MAX_BUFFER_SIZE`` (64 MB).  Once full, the
     oldest data is discarded.
     """
 
