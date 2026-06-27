@@ -1,0 +1,16 @@
+[Unit]
+Description=Reciva DLNA Stream Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/default/reciva-dlna-stream
+ExecStart=reciva-dlna-stream $CLI_ARGS
+Restart=on-failure
+RestartSec=5s
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

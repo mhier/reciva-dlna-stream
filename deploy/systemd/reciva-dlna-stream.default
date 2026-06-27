@@ -1,0 +1,31 @@
+# Configuration file for reciva-dlna-stream systemd service
+#
+# This file is sourced by the systemd unit as EnvironmentFile.
+# Set CLI_ARGS to pass arguments to the reciva-dlna-stream server.
+#
+# Installation location: /etc/default/reciva-dlna-stream
+
+# CLI arguments passed to the reciva-dlna-stream server.
+# Uncomment and edit the appropriate line for your setup.
+#
+# Single-stream mode (using --stream-url):
+#CLI_ARGS="--stream-url http://icecast.example.com/stream.mp3 --name \"My Radio\" --mime-type audio/mpeg"
+#
+# Multi-stream mode (using --config):
+#CLI_ARGS="--config /etc/reciva-dlna-stream/config.json"
+#
+# Common additional options:
+#   --port 8888       Override the default auto-assigned port
+#   --bind-ip 0.0.0.0 Override the bind address
+#   --verbose         Enable debug-level logging
+#
+# Example with all options:
+#CLI_ARGS="--stream-url http://icecast.example.com/stream.ogg --name \"My Station\" --port 8888 --verbose"
+
+# Optional: system user and group to run the service as.
+# If unset, the service runs as root (or as specified by systemd configuration).
+# It is recommended to create a dedicated system user for this service:
+#   sudo useradd --system --no-create-home reciva-dlna
+# Then uncomment and set:
+#USER=reciva-dlna
+#GROUP=reciva-dlna
