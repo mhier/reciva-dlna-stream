@@ -297,10 +297,11 @@ class StreamForwarder:
     the accumulated buffer data.
     """
 
-    def __init__(self, stream_url: str, mime_type: str) -> None:
+    def __init__(self, stream_url: str, mime_type: str, verbose_logging: bool = False) -> None:
         self._stream_url = stream_url
         self._mime_type = mime_type
         self._buffer = StreamBuffer(stream_url)
+        self._verbose_logging = verbose_logging
 
         self._active_connections: set[asyncio.Task[None]] = set()
         self._disconnect_timer: asyncio.Task[None] | None = None
@@ -598,10 +599,9 @@ class StreamForwarder:
                 offset += len(chunk)
                 remaining -= len(chunk)
 
-                if (
-                    bytes_sent < 1024 * 2
-                    or bytes_sent % (512 * 1024) < _BUFFER_SIZE
-                ):
+                # Log every chunk until 2 KB sent, then every 512 KB thereafter
+                LOG_INTERVAL = 512 * 1024
+                if bytes_sent < 2048 or (bytes_sent % LOG_INTERVAL) == 0:
                     _LOGGER.debug(
                         "Buffer range: forwarded %d/%d bytes",
                         bytes_sent,
@@ -667,11 +667,11 @@ class StreamForwarder:
 
                 bytes_sent += len(chunk)
 
-                if (
-                    bytes_sent < 1024 * 2
-                    or bytes_sent % (512 * 1024) < _BUFFER_SIZE
-                ):
-                    _LOGGER.debug("Forwarded %d bytes so far", bytes_sent)
+                # Log every chunk until 2 KB sent, then every 512 KB thereafter
+                if self._verbose_logging:
+                    LOG_INTERVAL = 512 * 1024
+                    if bytes_sent < 2048 or (bytes_sent % LOG_INTERVAL) == 0:
+                        _LOGGER.debug("Forwarded %d bytes so far", bytes_sent)
 
                 await asyncio.sleep(0)
         except asyncio.CancelledError:

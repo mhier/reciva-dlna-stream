@@ -110,7 +110,7 @@ async def async_main(args: argparse.Namespace) -> None:
     # Create a StreamForwarder for each configured stream
     forwarders: list[StreamForwarder] = []
     for stream in streams:
-        fwd = StreamForwarder(stream_url=stream.url, mime_type=stream.mime_type)
+        fwd = StreamForwarder(stream_url=stream.url, mime_type=stream.mime_type, verbose_logging=args.verbose)
         forwarders.append(fwd)
 
     # Build server device class with a unique UDN and custom name

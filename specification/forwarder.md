@@ -68,10 +68,11 @@ Logic:
 
 ### Constructor
 ```python
-StreamForwarder(stream_url: str, mime_type: str)
+StreamForwarder(stream_url: str, mime_type: str, verbose_logging: bool = False)
 ```
 - `stream_url`: URL of the remote internet radio stream
 - `mime_type`: MIME type of the stream (e.g. `"audio/mpeg"`; required, no default in code)
+- `verbose_logging`: If `True`, emit per-chunk progress DEBUG logs during streaming (every chunk until 2 KB sent, then every 512 KB). Default `False` to reduce log noise in normal operation.
 
 Internally creates a `StreamBuffer` instance. The buffer is **not started automatically** — it starts on first client connection. Also creates a `_disconnect_timer: asyncio.Task | None` for the grace period.
 

@@ -98,16 +98,16 @@ Shutdown sequence:
 | `--port` | 0 (auto-assign) | HTTP server port |
 | `--mime-type` | "audio/mpeg" | Stream MIME type (single-stream mode only) |
 | `--bind-ip` | "0.0.0.0" | HTTP bind address |
-| `--verbose` / `-v` | off | Enable debug logging |
+| `--verbose` / `-v` | off | Enable debug logging. Also enables per-chunk progress logging during streaming. |
 
 ### Flow
 1. Detect local IP (via UDP connect to 8.8.8.8:80 or gethostbyname fallback)
 2. If `--config` is given:
    - Parse `load_config()` → list of `StreamConfig`
-   - Create one `StreamForwarder` per stream
+   - Create one `StreamForwarder` per stream (with `verbose_logging=args.verbose`)
 3. If `--stream-url` is given:
    - Build a single `StreamConfig` with `--name` and `--mime-type`
-   - Create one `StreamForwarder`
+   - Create one `StreamForwarder` (with `verbose_logging=args.verbose`)
 4. Create a custom `MediaServerDevice` subclass with unique UDN and friendly name
 5. Call `set_forwarders(forwarders)` on the device class constructor
 6. Call `start_server()` with all streams, forwarders, and parameters — this starts the HTTP server, SSDP, and all ring buffers

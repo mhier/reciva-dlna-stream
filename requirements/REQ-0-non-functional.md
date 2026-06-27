@@ -100,6 +100,7 @@ The server must log meaningful information for debugging operational issues.
   - `WARNING`: Client disconnects mid-write, buffer timeouts.
   - `ERROR`: Unexpected exceptions (with `_LOGGER.exception()`).
 - CLI `--verbose`/`-v` flag to enable DEBUG-level logging.
+- **Per-chunk progress logging during streaming** (every chunk until 2 KB, then every 512 KB) is only emitted when `--verbose` is active. Without it, no periodic progress is logged during active streaming — reducing log noise in normal operation.
 
 ---
 
