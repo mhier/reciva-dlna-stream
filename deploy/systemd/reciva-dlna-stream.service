@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=/etc/default/reciva-dlna-stream
-ExecStart=reciva-dlna-stream $CLI_ARGS
+ExecStart=${RECIVA_DLNA_BIN} $CLI_ARGS
 Restart=on-failure
 RestartSec=5s
 PrivateTmp=yes

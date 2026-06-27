@@ -25,3 +25,9 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 log_cli = true
 log_cli_level = "INFO"
+filterwarnings = [
+    # Suppress upstream async_upnp_client DeprecationWarning for truth-value
+    # testing on XML elements (Python 3.12+). This is a known issue in the
+    # library — not actionable in our project.
+    "ignore:Testing an element's truth value:DeprecationWarning",
+]

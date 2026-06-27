@@ -5,6 +5,10 @@
 #
 # Installation location: /etc/default/reciva-dlna-stream
 
+# Path to the entry point in the virtual environment.
+# This is set automatically by the install script.
+#RECIVA_DLNA_BIN=/usr/local/lib/reciva-dlna-stream/venv/bin/reciva-dlna-stream
+
 # CLI arguments passed to the reciva-dlna-stream server.
 # Uncomment and edit the appropriate line for your setup.
 #
@@ -12,7 +16,7 @@
 #CLI_ARGS="--stream-url http://icecast.example.com/stream.mp3 --name \"My Radio\" --mime-type audio/mpeg"
 #
 # Multi-stream mode (using --config):
-#CLI_ARGS="--config /etc/reciva-dlna-stream/config.json"
+CLI_ARGS="--config /usr/local/etc/reciva-dlna-stream/config.json"
 #
 # Common additional options:
 #   --port 8888       Override the default auto-assigned port
@@ -22,10 +26,3 @@
 # Example with all options:
 #CLI_ARGS="--stream-url http://icecast.example.com/stream.ogg --name \"My Station\" --port 8888 --verbose"
 
-# Optional: system user and group to run the service as.
-# If unset, the service runs as root (or as specified by systemd configuration).
-# It is recommended to create a dedicated system user for this service:
-#   sudo useradd --system --no-create-home reciva-dlna
-# Then uncomment and set:
-#USER=reciva-dlna
-#GROUP=reciva-dlna

@@ -26,7 +26,7 @@ The project must ship a `reciva-dlna-stream.service` systemd unit file that star
 - It must execute the `reciva-dlna-stream` console_scripts entry point (as defined in `pyproject.toml`).
 - The unit must not contain hardcoded stream URLs or configuration — all runtime arguments are supplied via the environment file (REQ-6.2).
 - The unit must define a `[Unit]` section with a Description and a `[Service]` section with the execution command, and an `[Install]` section for enablement.
-- The `ExecStart` command must invoke the `reciva-dlna-stream` executable with `$CLI_ARGS`.
+- The `ExecStart` command must invoke the entry point (via `${RECIVA_DLNA_BIN}`) with `$CLI_ARGS`. The `RECIVA_DLNA_BIN` variable is set in the environment file by the install script and points to the virtual environment's entry point (REQ-6.8).
 
 ---
 
@@ -41,6 +41,7 @@ The `.service` file must use `EnvironmentFile=/etc/default/reciva-dlna-stream` t
 - The environment file must define `CLI_ARGS` as a shell variable containing the CLI arguments (e.g. `CLI_ARGS="--stream-url http://example.com/stream --name MyRadio"`).
 - A template environment file must be shipped in `deploy/systemd/reciva-dlna-stream.default` with all supported CLI arguments documented and commented out.
 - Supported CLI arguments that may appear in `CLI_ARGS`: `--stream-url`, `--config`, `--port`, `--bind-ip`, `--name`, `--mime-type`, `--verbose`.
+- The environment file must also define `RECIVA_DLNA_BIN` with the path to the venv entry point (set automatically by the install script).
 - The environment file may also optionally define `USER` and `GROUP` variables to specify the system user/group under which the service runs.
 
 ---
@@ -113,20 +114,18 @@ There must be an install script (`deploy/install.sh`) that checks it is running 
 
 ---
 
-## REQ-6.8: Install Script — GNU-Standard Installation
+## REQ-6.8: Install Script — Virtual Environment Installation
 
 **Status: ⬜ Not Started**
 
-The install script must install the server's Python package into the system using `pip install` with a target directory that follows GNU coding standards.
+The install script must create a dedicated Python virtual environment and install the package into it, rather than installing system-wide. This is required to comply with PEP 668 (externally-managed-environment), which is enforced by Debian 13+.
 
 ### Details
-- The default installation prefix shall be `/usr/local` (matching GNU standards for locally-built software).
-- The script must install into the system Python environment using `pip install .` from the repository root.
-- The GNU standard directory layout is followed:
-  - Executables → `/usr/local/bin/`
-  - Config files → `/usr/local/etc/reciva-dlna-stream/`
-  - Data / supporting files → `/usr/local/share/reciva-dlna-stream/`
-- After installation, the `reciva-dlna-stream` CLI entry point (console_scripts) must be available in the system PATH.
+- The virtual environment shall be created at `/usr/local/lib/reciva-dlna-stream/venv/` using `python3 -m venv`.
+- The package shall be installed into this venv using the venv's pip: `${VENV_DIR}/bin/pip install .`.
+- The entry point path is `${VENV_DIR}/bin/reciva-dlna-stream`.
+- The install script must write a `RECIVA_DLNA_BIN` variable pointing to the entry point into the environment file (`/etc/default/reciva-dlna-stream`), so the systemd unit can find the executable.
+- Config files go to `/usr/local/etc/reciva-dlna-stream/` (unchanged from GNU standard layout).
 
 ---
 
@@ -155,4 +154,5 @@ After installation, the example config file must be placed at the standard confi
 - The source file is `example-config.json` from the repository root.
 - It shall be installed to `/usr/local/etc/reciva-dlna-stream/config.json` (dropping the `example-` prefix).
 - The installation script must also update the environment file (`/etc/default/reciva-dlna-stream`) so that the default `CLI_ARGS` references this config file (the `--config` option pointing to `/usr/local/etc/reciva-dlna-stream/config.json`).
+- The install script must also write `RECIVA_DLNA_BIN` into the environment file, pointing at the venv entry point (e.g. `/usr/local/lib/reciva-dlna-stream/venv/bin/reciva-dlna-stream`).
 - This means the service can be started immediately after installation (the user only needs to edit the config if they want different streams).

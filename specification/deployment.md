@@ -21,7 +21,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=/etc/default/reciva-dlna-stream
-ExecStart=reciva-dlna-stream $CLI_ARGS
+ExecStart=${RECIVA_DLNA_BIN} $CLI_ARGS
 Restart=on-failure
 RestartSec=5s
 PrivateTmp=yes
@@ -33,19 +33,21 @@ WantedBy=multi-user.target
 
 ### Key Design Decisions
 
-1. **`After=network-online.target`** — Ensures the network is fully up before the service starts, so the server can reach the remote stream URL immediately.
+1. **Python environment**: A dedicated virtual environment is created at `/usr/local/lib/reciva-dlna-stream/venv/` (instead of installing system-wide). This avoids PEP 668 (externally-managed-environment) errors on Debian 13+.
 
-2. **`EnvironmentFile=/etc/default/reciva-dlna-stream`** — All runtime configuration is supplied via an environment file. The unit file itself contains no hardcoded stream URLs or options. This follows the convention used by many Debian/Ubuntu packages.
+2. **`After=network-online.target`** — Ensures the network is fully up before the service starts, so the server can reach the remote stream URL immediately.
 
-3. **`ExecStart=reciva-dlna-stream $CLI_ARGS`** — Invokes the console_scripts entry point defined in `pyproject.toml`. The `$CLI_ARGS` variable is expanded from the environment file and contains all CLI arguments (`--stream-url`, `--config`, `--port`, etc.).
+3. **`EnvironmentFile=/etc/default/reciva-dlna-stream`** — All runtime configuration is supplied via an environment file. The unit file itself contains no hardcoded stream URLs or options. This follows the convention used by many Debian/Ubuntu packages.
 
-4. **`Restart=on-failure` + `RestartSec=5s`** — Automatically restarts the service on non-zero exit codes, signal termination (except `systemctl stop`), or operation timeouts. The 5-second delay prevents rapid restart loops.
+4. **`ExecStart=${RECIVA_DLNA_BIN} $CLI_ARGS`** — Uses the `RECIVA_DLNA_BIN` variable (set to the venv entry point path by the install script) to invoke the console_scripts entry point. The `$CLI_ARGS` variable is expanded from the environment file.
 
-5. **`PrivateTmp=yes`** — Provides a private `/tmp` and `/var/tmp` namespace for the service, a moderate hardening measure.
+5. **`Restart=on-failure` + `RestartSec=5s`** — Automatically restarts the service on non-zero exit codes, signal termination (except `systemctl stop`), or operation timeouts. The 5-second delay prevents rapid restart loops.
 
-6. **`NoNewPrivileges=yes`** — Prevents the service and its children from gaining new privileges via `setuid`/`setgid` binaries or `capability` syscalls.
+6. **`PrivateTmp=yes`** — Provides a private `/tmp` and `/var/tmp` namespace for the service, a moderate hardening measure.
 
-7. **No `StandardOutput=`/`StandardError=`** — systemd captures stdout/stderr into the journal by default. The server already logs via Python's `logging` module which writes to stderr.
+7. **`NoNewPrivileges=yes`** — Prevents the service and its children from gaining new privileges via `setuid`/`setgid` binaries or `capability` syscalls.
+
+8. **No `StandardOutput=`/`StandardError=`** — systemd captures stdout/stderr into the journal by default. The server already logs via Python's `logging` module which writes to stderr.
 
 ### User/Group Configuration
 
@@ -71,6 +73,7 @@ The file is a shell script sourced by systemd. It defines:
 
 | Variable | Required | Description |
 |---|---|---|
+| `RECIVA_DLNA_BIN` | Yes | Path to the entry point in the virtual environment (set by install script). E.g. `/usr/local/lib/reciva-dlna-stream/venv/bin/reciva-dlna-stream` |
 | `CLI_ARGS` | Yes | All CLI arguments passed to the server. See below for examples. |
 | `USER` | No | System user to run the service as (requires a drop-in override in the unit). |
 | `GROUP` | No | System group to run the service as (requires a drop-in override in the unit). |
@@ -84,7 +87,7 @@ CLI_ARGS="--stream-url http://icecast.example.com/stream.mp3 --name \"My Radio\"
 
 **Multi-stream mode:**
 ```
-CLI_ARGS="--config /etc/reciva-dlna-stream/config.json"
+CLI_ARGS="--config /usr/local/etc/reciva-dlna-stream/config.json"
 ```
 
 **With additional options:**
@@ -132,15 +135,17 @@ The project ships `deploy/install.sh` — a single bash script that fully instal
 | Step | Action | Detail |
 |------|--------|--------|
 | 1 | Root check | Refuse to run unless `EUID` is 0. Print error and exit 1 if not root. |
-| 2 | Python package install | Run `pip install .` from the repository root to install the `reciva-dlna-stream` console_scripts entry point into the system Python environment. |
-| 3 | Systemd unit install | Copy `deploy/systemd/reciva-dlna-stream.service` → `/etc/systemd/system/reciva-dlna-stream.service`. |
-| 4 | Environment file install | Copy `deploy/systemd/reciva-dlna-stream.default` → `/etc/default/reciva-dlna-stream`. |
-| 5 | Config directory setup | Create `/usr/local/etc/reciva-dlna-stream/` (if not present). |
-| 6 | Default config install | Copy `example-config.json` → `/usr/local/etc/reciva-dlna-stream/config.json` (renamed from `example-` prefix). |
-| 7 | Default CLI_ARGS in env file | Enable the `--config` line in `/etc/default/reciva-dlna-stream` pointing to `/usr/local/etc/reciva-dlna-stream/config.json`. The script does this by uncommenting and editing the appropriate line in place. |
-| 8 | Daemon reload | Run `systemctl daemon-reload`. |
-| 9 | Enable service | Run `systemctl enable reciva-dlna-stream`. |
-| 10 | Print success message | Notify the user that installation is complete and they should edit config and start the service. |
+| 2 | Virtual environment creation | Create `/usr/local/lib/reciva-dlna-stream/venv/` using `python3 -m venv`. |
+| 3 | Python package install | Run `${VENV_DIR}/bin/pip install .` from the repository root to install into the venv. |
+| 4 | Systemd unit install | Copy `deploy/systemd/reciva-dlna-stream.service` → `/etc/systemd/system/reciva-dlna-stream.service`. |
+| 5 | Environment file install | Copy `deploy/systemd/reciva-dlna-stream.default` → `/etc/default/reciva-dlna-stream`. |
+| 6 | Config directory setup | Create `/usr/local/etc/reciva-dlna-stream/` (if not present). |
+| 7 | Default config install | Copy `example-config.json` → `/usr/local/etc/reciva-dlna-stream/config.json` (renamed from `example-` prefix). |
+| 8 | Default CLI_ARGS in env file | Enable the `--config` line in `/etc/default/reciva-dlna-stream` pointing to `/usr/local/etc/reciva-dlna-stream/config.json`. The script does this by uncommenting and editing the appropriate line in place. |
+| 9 | RECIVA_DLNA_BIN in env file | Append `RECIVA_DLNA_BIN` pointing to `/usr/local/lib/reciva-dlna-stream/venv/bin/reciva-dlna-stream` in the environment file. |
+| 10 | Daemon reload | Run `systemctl daemon-reload`. |
+| 11 | Enable service | Run `systemctl enable reciva-dlna-stream`. |
+| 12 | Print success message | Notify the user that installation is complete and they should edit config and start the service. |
 
 ### Root Check
 
@@ -159,11 +164,11 @@ The install script follows the GNU coding standards for directory layout:
 
 | Path | Purpose |
 |------|---------|
-| `/usr/local/bin/reciva-dlna-stream` | Console_scripts entry point (installed by pip) |
+| `/usr/local/lib/reciva-dlna-stream/venv/bin/reciva-dlna-stream` | Console_scripts entry point (inside venv, installed by pip) |
 | `/usr/local/etc/reciva-dlna-stream/config.json` | Default multi-stream config file |
 | `/usr/local/share/reciva-dlna-stream/` | Reserved for supporting data files (future use) |
 | `/etc/systemd/system/reciva-dlna-stream.service` | Systemd unit file |
-| `/etc/default/reciva-dlna-stream` | Environment file with CLI_ARGS |
+| `/etc/default/reciva-dlna-stream` | Environment file with CLI_ARGS and RECIVA_DLNA_BIN |
 
 ### Pre-Installation Requirements
 

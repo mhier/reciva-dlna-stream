@@ -3,7 +3,7 @@
 # install.sh — Install reciva-dlna-stream onto the system.
 #
 # This script must be run as root. It:
-#   1. Installs the Python package into the system environment
+#   1. Creates a virtual environment and installs the Python package into it
 #   2. Copies the systemd unit file and environment file
 #   3. Sets up the default config (from example-config.json)
 #   4. Enables the systemd service (but does NOT start it)
@@ -21,6 +21,8 @@ CONFIG_DIR="/usr/local/etc/${SERVICE_NAME}"
 CONFIG_FILE="${CONFIG_DIR}/config.json"
 UNIT_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 ENV_FILE="/etc/default/${SERVICE_NAME}"
+VENV_DIR="/usr/local/lib/${SERVICE_NAME}/venv"
+ENTRY_POINT="${VENV_DIR}/bin/reciva-dlna-stream"
 
 # Source paths relative to the repository root
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -38,11 +40,13 @@ fi
 echo "[*] Installing ${SERVICE_NAME}..."
 
 # ---------------------------------------------------------------------------
-# 1. Install Python package
+# 1. Create virtual environment and install Python package
 # ---------------------------------------------------------------------------
+mkdir -p "$(dirname "$VENV_DIR")"
+python3 -m venv "$VENV_DIR"
 cd "$REPO_DIR"
-pip install .
-echo "[*] Python package installed."
+"${VENV_DIR}/bin/pip" install .
+echo "[*] Python package installed in virtual environment: ${VENV_DIR}"
 
 # ---------------------------------------------------------------------------
 # 2. Install systemd unit file
@@ -68,7 +72,11 @@ echo "[*] Default config installed: ${CONFIG_FILE}"
 # ---------------------------------------------------------------------------
 # Replace the commented-out --config line with the active one pointing
 # to the installed config file.
-sed -i "s|^#CLI_ARGS=\"--config /etc/reciva-dlna-stream/config.json\"|CLI_ARGS=\"--config ${CONFIG_FILE}\"|" "$ENV_FILE"
+sed -i "s|^#CLI_ARGS=\"--config /usr/local/etc/reciva-dlna-stream/config.json\"|CLI_ARGS=\"--config ${CONFIG_FILE}\"|" "$ENV_FILE"
+# Also set the entry point path so the systemd unit can find it
+if ! grep -q "^RECIVA_DLNA_BIN=" "$ENV_FILE"; then
+    echo "RECIVA_DLNA_BIN=${ENTRY_POINT}" >> "$ENV_FILE"
+fi
 echo "[*] Environment file updated with default CLI_ARGS."
 
 # ---------------------------------------------------------------------------
