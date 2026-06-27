@@ -49,7 +49,10 @@ async def start_server(
 4. Start SSDP
    │
    ├── SsdpSearchResponder (responds to M-SEARCH)
-   └── SsdpAdvertisementAnnouncer (sends NOTIFY every ~30s)
+   └── FastSsdpAdvertisementAnnouncer (sends ALL NOTIFY entries every ~5s)
+       │
+       └── All ~5 NT/USN entries sent at once per interval
+           → server visible on first beacon
 
 5. Return ServerHandle(port, responder, announcer, runner, forwarders)
 
@@ -113,3 +116,16 @@ Shutdown sequence:
 
 ### SSDP TTL Monkey-Patch
 The `async_upnp_client` library hard-codes SSDP multicast TTL = 2, but UPnP Device Architecture v2.0 mandates TTL = 4. The monkey-patch in `__main__.py` overrides `get_ssdp_socket()` to set `IP_MULTICAST_TTL = 4` on the SSDP socket.
+
+### SSDP NOTIFY: `FastSsdpAdvertisementAnnouncer`
+
+The upstream `SsdpAdvertisementAnnouncer` cycles through NT/USN pairs, sending **one** per interval (~5 entries, 30s each → ~150s full cycle). Reciva radios seem to only respond to specific NT/USN entries (e.g. `upnp:rootdevice`), so they miss the server for multiple cycles.
+
+`server_lifecycle.py` provides `FastSsdpAdvertisementAnnouncer`, a subclass that:
+- Sets `ANNOUNCE_INTERVAL = timedelta(seconds=5)`
+- Replaces the `itertools.cycle` with a plain list of all advertisements
+- Overrides `_announce_next()` to send **all** entries at once every 5 seconds
+
+This means every beacon contains every NT/USN combination, so the radio discovers the server on the first beacon it receives.
+
+Network overhead: ~500 bytes × 5 entries / 5s = ~500 bytes/sec — negligible.

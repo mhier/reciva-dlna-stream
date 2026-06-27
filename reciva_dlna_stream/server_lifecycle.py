@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import socket
+from datetime import timedelta
 from functools import partial
 from typing import Sequence, cast
 
@@ -22,15 +23,63 @@ from async_upnp_client.server import (
     SsdpSearchResponder,
     UpnpServerService,
     _LOGGER_TRAFFIC_UPNP,
+    _build_advertisements,
     action_handler,
     subscribe_handler,
     to_xml,
     unsubscribe_handler,
 )
+from async_upnp_client.ssdp import SsdpProtocol, build_ssdp_packet
 
 from .stream_config import StreamConfig
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class FastSsdpAdvertisementAnnouncer(SsdpAdvertisementAnnouncer):
+    """SSDP announcer that sends all NOTIFY entries each interval.
+
+    The upstream library cycles through one NT/USN pair per interval,
+    delivering only 1 of ~5 entries per beacon. Reciva radios seem to
+    only respond to specific NT/USN entries (e.g. ``upnp:rootdevice``),
+    causing multi-minute delays before discovery succeeds.
+
+    This subclass sends ALL advertisement entries at every 5-second
+    interval, so the radio sees every NT/USN combination on every beacon.
+    """
+
+    ANNOUNCE_INTERVAL = timedelta(seconds=5)
+
+    def __init__(self, *args, **kwargs):
+        """Initialize and store the full advertisement list."""
+        super().__init__(*args, **kwargs)
+        # The parent __init__ set self._advertisements = cycle(entries).
+        # Replace with a plain list so we can iterate all at once.
+        self._advertisements = _build_advertisements(self.target, self.device)
+
+    def _announce_next(self) -> None:
+        """Send ALL advertisement entries, then reschedule."""
+        _LOGGER.debug("Announcing all %d advertisements", len(self._advertisements))
+        assert self._transport
+
+        protocol = cast(SsdpProtocol, self._transport.get_protocol())
+        start_line = "NOTIFY * HTTP/1.1"
+
+        for headers in self._advertisements:
+            packet = build_ssdp_packet(start_line, headers)
+            _LOGGER.debug(
+                "Sending SSDP NOTIFY: NTS=%s NT=%s USN=%s",
+                headers["NTS"],
+                headers["NT"],
+                headers["USN"],
+            )
+            protocol.send_ssdp_packet(packet, self.target)
+
+        # Reschedule self.
+        self._cancel_announce = self._loop.call_later(
+            self.ANNOUNCE_INTERVAL.total_seconds(),
+            self._announce_next,
+        )
 
 
 class ServerHandle:
@@ -153,7 +202,7 @@ async def start_server(
         source=source,
         options={"ssdp_search_responder_always_rootdevice": True},
     )
-    advertisement_announcer = SsdpAdvertisementAnnouncer(
+    advertisement_announcer = FastSsdpAdvertisementAnnouncer(
         device,
         source=source,
     )

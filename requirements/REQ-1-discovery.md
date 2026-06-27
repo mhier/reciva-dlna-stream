@@ -26,12 +26,13 @@ The server MUST announce itself as a UPnP MediaServer device on the local networ
 
 ## REQ-1.2: SSDP NOTIFY (Alive / Byebye)
 
-**Status: ✅ Implemented**
+**Status: ✅ Implemented** (all entries sent every 5s for instant Reciva discovery)
 
 The server must send periodic SSDP NOTIFY `ssdp:alive` messages so that clients discover it without actively searching.
 
 ### Details
-- NOTIFY multicast messages must be sent to `239.255.255.250:1900` approximately every 30 seconds.
+- NOTIFY multicast messages must be sent to `239.255.255.250:1900` every 5 seconds.
+- All NT/USN entries (rootdevice, UUID, device type, ContentDirectory:1, ConnectionManager:1) are sent in a single burst per interval — no cycling.
 - Messages must include the LOCATION URL pointing to the device description XML.
 - On shutdown, the server must send `ssdp:byebye` messages to allow clients to promptly remove it from their device list.
 

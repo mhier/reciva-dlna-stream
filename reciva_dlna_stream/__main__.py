@@ -161,7 +161,7 @@ async def async_main(args: argparse.Namespace) -> None:
     _LOGGER.info("Device XML: %s/device.xml", base_uri)
     for idx, stream in enumerate(streams):
         _LOGGER.info("Stream %d: %s <- %s", idx, stream.name, stream.url)
-    _LOGGER.info("SSDP advertisements being sent every ~30s")
+    _LOGGER.info("SSDP advertisements being sent every ~5s")
     _LOGGER.info("Waiting for DLNA clients on the network...")
     _LOGGER.info("=" * 50)
     _LOGGER.info("Press Ctrl+C to stop")
