@@ -22,8 +22,8 @@ set -euo pipefail
 # Configuration
 # ---------------------------------------------------------------------------
 SERVICE_NAME="reciva-dlna-stream"
-SERVICE_USER="${SERVICE_NAME}"
-SERVICE_GROUP="${SERVICE_NAME}"
+SERVICE_USER="reciva-dlna"
+SERVICE_GROUP="reciva-dlna"
 CONFIG_DIR="/usr/local/etc/${SERVICE_NAME}"
 CONFIG_FILE="${CONFIG_DIR}/config.json"
 UNIT_FILE="/etc/systemd/system/${SERVICE_NAME}.service"

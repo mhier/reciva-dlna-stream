@@ -234,34 +234,55 @@ sudo deploy/install.sh
 
 ### Steps
 
-1. **Copy the unit file and substitute the entry point path:**
+1. **Create the system user and group:**
+   ```bash
+   sudo groupadd --system reciva-dlna
+   sudo useradd --system --no-create-home --gid reciva-dlna \
+       --home-dir /var/lib/reciva-dlna-stream \
+       --comment "Reciva DLNA Stream Server" reciva-dlna
+   sudo mkdir -p /var/lib/reciva-dlna-stream
+   sudo chown reciva-dlna:reciva-dlna /var/lib/reciva-dlna-stream
+   sudo chmod 750 /var/lib/reciva-dlna-stream
+   ```
+
+2. **Copy the unit file and substitute the entry point path:**
    ```bash
    sudo cp deploy/systemd/reciva-dlna-stream.service /etc/systemd/system/
    sudo sed -i "s|@ENTRY_POINT@|/usr/local/lib/reciva-dlna-stream/venv/bin/reciva-dlna-stream|g" /etc/systemd/system/reciva-dlna-stream.service
    ```
 
-2. **Install and configure the environment file:**
+3. **Install and configure the environment file:**
    ```bash
    sudo cp deploy/systemd/reciva-dlna-stream.default /etc/default/reciva-dlna-stream
    sudo vi /etc/default/reciva-dlna-stream  # Edit CLI_ARGS
    ```
 
-3. **Reload systemd:**
+4. **Fix ownership of installed files:**
+   ```bash
+   sudo chown -R reciva-dlna:reciva-dlna /usr/local/lib/reciva-dlna-stream/
+   sudo chown -R reciva-dlna:reciva-dlna /usr/local/etc/reciva-dlna-stream/
+   sudo chown root:reciva-dlna /etc/systemd/system/reciva-dlna-stream.service
+   sudo chmod 644 /etc/systemd/system/reciva-dlna-stream.service
+   sudo chown root:reciva-dlna /etc/default/reciva-dlna-stream
+   sudo chmod 644 /etc/default/reciva-dlna-stream
+   ```
+
+5. **Reload systemd:**
    ```bash
    sudo systemctl daemon-reload
    ```
 
-4. **Enable auto-start on boot:**
+6. **Enable auto-start on boot:**
    ```bash
    sudo systemctl enable reciva-dlna-stream
    ```
 
-5. **Start the service:**
+7. **Start the service:**
    ```bash
    sudo systemctl start reciva-dlna-stream
    ```
 
-6. **Verify status:**
+8. **Verify status:**
    ```bash
    systemctl status reciva-dlna-stream
    ```
