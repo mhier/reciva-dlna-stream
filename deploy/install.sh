@@ -49,9 +49,10 @@ cd "$REPO_DIR"
 echo "[*] Python package installed in virtual environment: ${VENV_DIR}"
 
 # ---------------------------------------------------------------------------
-# 2. Install systemd unit file
+# 2. Install systemd unit file (with placeholder substitution)
 # ---------------------------------------------------------------------------
 cp "${SCRIPT_DIR}/systemd/${SERVICE_NAME}.service" "$UNIT_FILE"
+sed -i "s|@ENTRY_POINT@|${ENTRY_POINT}|g" "$UNIT_FILE"
 echo "[*] Systemd unit installed: ${UNIT_FILE}"
 
 # ---------------------------------------------------------------------------
@@ -73,10 +74,6 @@ echo "[*] Default config installed: ${CONFIG_FILE}"
 # Replace the commented-out --config line with the active one pointing
 # to the installed config file.
 sed -i "s|^#CLI_ARGS=\"--config /usr/local/etc/reciva-dlna-stream/config.json\"|CLI_ARGS=\"--config ${CONFIG_FILE}\"|" "$ENV_FILE"
-# Also set the entry point path so the systemd unit can find it
-if ! grep -q "^RECIVA_DLNA_BIN=" "$ENV_FILE"; then
-    echo "RECIVA_DLNA_BIN=${ENTRY_POINT}" >> "$ENV_FILE"
-fi
 echo "[*] Environment file updated with default CLI_ARGS."
 
 # ---------------------------------------------------------------------------

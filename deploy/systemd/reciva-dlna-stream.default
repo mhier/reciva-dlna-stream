@@ -5,10 +5,6 @@
 #
 # Installation location: /etc/default/reciva-dlna-stream
 
-# Path to the entry point in the virtual environment.
-# This is set automatically by the install script.
-#RECIVA_DLNA_BIN=/usr/local/lib/reciva-dlna-stream/venv/bin/reciva-dlna-stream
-
 # CLI arguments passed to the reciva-dlna-stream server.
 # Uncomment and edit the appropriate line for your setup.
 #
