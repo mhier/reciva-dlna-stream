@@ -23,6 +23,8 @@ _CONNECT_TIMEOUT = 30
 _READ_TIMEOUT = 10
 # Maximum buffer size for cached stream data (64 MB)
 _MAX_BUFFER_SIZE = 64 * 1024 * 1024
+# Delay between reconnection attempts when the remote stream fails
+_RECONNECT_DELAY = 5
 
 # ---------------------------------------------------------------------------
 # Fake content length for the live stream
@@ -91,6 +93,9 @@ class StreamBuffer:
         self._event = asyncio.Event()
         self._lock = asyncio.Lock()
         self._stopped = False
+        # Long-lived session + connector to avoid memory leak on reconnection
+        self._connector: aiohttp.TCPConnector | None = None
+        self._session: aiohttp.ClientSession | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -103,6 +108,7 @@ class StreamBuffer:
     async def stop(self) -> None:
         """Stop the background buffer task."""
         self._stopped = True
+        self._event.set()  # wake any waiting readers so they can exit
         if self._task is not None:
             self._task.cancel()
             try:
@@ -110,6 +116,16 @@ class StreamBuffer:
             except asyncio.CancelledError:
                 pass
             self._task = None
+        await self._close_session()
+
+    async def _close_session(self) -> None:
+        """Close the long-lived aiohttp session and connector."""
+        if self._session is not None:
+            await self._session.close()
+            self._session = None
+        if self._connector is not None:
+            await self._connector.close()
+            self._connector = None
 
     @property
     def buffered_bytes(self) -> int:
@@ -126,24 +142,31 @@ class StreamBuffer:
     # ------------------------------------------------------------------
 
     async def _run(self) -> None:
-        """Continuously fetch the remote stream and fill the buffer."""
+        """Continuously fetch the remote stream and fill the buffer.
+
+        Uses a single long-lived ``aiohttp.ClientSession`` to avoid
+        memory leaks from repeated session creation on reconnection.
+        """
         timeout = aiohttp.ClientTimeout(
             total=None,
             connect=_CONNECT_TIMEOUT,
             sock_read=_READ_TIMEOUT,
         )
-        connector = aiohttp.TCPConnector(limit=1)
+        self._connector = aiohttp.TCPConnector(limit=1)
+        self._session = aiohttp.ClientSession(
+            connector=self._connector, timeout=timeout
+        )
 
-        while not self._stopped:
-            try:
-                async with aiohttp.ClientSession(
-                    connector=connector, timeout=timeout
-                ) as session:
+        try:
+            while not self._stopped:
+                try:
                     _LOGGER.info(
                         "Buffer: fetching remote stream: %s",
                         self._stream_url,
                     )
-                    async with session.get(self._stream_url) as remote_resp:
+                    async with self._session.get(
+                        self._stream_url
+                    ) as remote_resp:
                         _LOGGER.info(
                             "Buffer: remote stream connected: status=%d",
                             remote_resp.status,
@@ -169,17 +192,25 @@ class StreamBuffer:
                                     )
 
                             self._event.set()
-                            self._event.clear()
 
                             await asyncio.sleep(0)
 
-            except asyncio.CancelledError:
-                return
-            except Exception:
-                _LOGGER.exception(
-                    "Buffer: error reading stream, reconnecting in 5s"
-                )
-                await asyncio.sleep(5)
+                        # Remote stream ended cleanly (not an error, just retry)
+                        _LOGGER.info(
+                            "Buffer: remote stream ended, reconnecting"
+                        )
+
+                except asyncio.CancelledError:
+                    return
+                except Exception:
+                    _LOGGER.exception(
+                        "Buffer: error reading stream, reconnecting"
+                    )
+
+                if not self._stopped:
+                    await asyncio.sleep(_RECONNECT_DELAY)
+        finally:
+            await self._close_session()
 
     # ------------------------------------------------------------------
     # Read interface for HTTP handlers
@@ -235,6 +266,9 @@ class StreamBuffer:
             await asyncio.wait_for(
                 self._event.wait(), timeout=max(0.1, deadline - asyncio.get_running_loop().time())
             )
+            # Clear the event so we don't spin — if new data arrives,
+            # _run() will set() it again and wake us.
+            self._event.clear()
 
 
 class StreamForwarder:
