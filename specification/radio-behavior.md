@@ -75,3 +75,19 @@ If any part of the probing or playback fails:
 2. Logs `contentDidPlay(0)` with a dismiss message
 3. Retries the entire discovery + probe + play cycle
 4. This continues indefinitely (every ~10 seconds)
+
+## Implementation Status
+
+**Status: IMPLEMENTED** — All documented Reciva radio behaviors are handled
+by the current implementation:
+
+| Requirement | Status |
+|-------------|--------|
+| Advertise Content-Length (fake) | Implemented |
+| Advertise Accept-Ranges: bytes | Implemented |
+| Respond 206 Partial Content to Range requests | Implemented |
+| Serve valid bytes for last 129 bytes (ID3v1.1 tag) | Implemented (`_SYNTHETIC_FOOTER`) |
+| Serve valid MP3 data for first 128 KB | Implemented (via ring buffer) |
+| Consistent data at byte position N across connections | Implemented (ring buffer) |
+| Respond with expected HTTP status codes and headers | Implemented |
+| Retry behavior (client-side, not server responsibility) | Documented only — server handles its own reconnection

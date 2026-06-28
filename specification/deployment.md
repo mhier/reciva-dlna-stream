@@ -316,3 +316,18 @@ This ensures the server recovers from transient failures such as:
 - The systemd unit calls the same CLI entry point defined in [`server-lifecycle.md`](server-lifecycle.md).
 - No changes to the Python codebase are needed — the unit simply wraps the existing `reciva-dlna-stream` command with arguments supplied via the environment file.
 - Testing the systemd unit is out of scope for pytest-based integration tests; it is a deployment concern.
+
+## Implementation Status
+
+**Status: IMPLEMENTED** — The deployment scripts, systemd unit, and install
+procedure are fully implemented and match this specification.
+
+| Aspect | Status |
+|--------|--------|
+| Systemd unit file (`deploy/systemd/reciva-dlna-stream.service`) | Implemented |
+| Environment file template (`deploy/systemd/reciva-dlna-stream.default`) | Implemented |
+| Install script (`deploy/install.sh`) | Implemented |
+| User/group creation (idempotent) | Implemented |
+| Virtual environment + pip install | Implemented |
+| Journald logging (no config needed) | Implemented |
+| Placeholder substitution (`@ENTRY_POINT@`) | Implemented |

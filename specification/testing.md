@@ -23,7 +23,7 @@ A minimal HTTP server that serves **limited** dummy MP3 data per connection. Ser
 Creates a `StreamForwarder` pointing at the fake radio URL.
 
 ### `dlna_server` (async fixture)
-Uses `start_server()` (same as production) to start the full server with the stream forwarder. The server lifecycle starts the ring buffer background task. Yields a `ServerHandle`.
+Uses `start_server()` (same as production) to start the full server with the stream forwarder. The server lifecycle starts the ring buffer background task. Yields a `ServerHandle`. Uses `make_device_class` from `server.py` (same factory as production).
 
 ### `dlna_base_uri`
 The base URI of the running server (e.g. `http://127.0.0.1:12345`).
@@ -123,15 +123,28 @@ Multi-stream mode: legacy `/stream` returns 404 (only indexed routes exist).
 
 | Spec file | Claims | Covered | Missing (intentionally low priority) |
 |-----------|--------|---------|--------------------------------------|
-| architecture.md | 6 key decisions | 6/6 | — |
-| forwarder.md | ~15 claims | 15/15 | — |
+| architecture.md | 7 key decisions | 7/7 | — |
+| forwarder.md | ~18 claims | 18/18 | — |
 | server.md | ~15 claims | 14/15 | Search action returns empty |
-| server-lifecycle.md | ~5 claims | 3/5 | Startup ordering (hard to verify externally), SSDP TTL value |
+| server-lifecycle.md | ~6 claims | 3/6 | Startup ordering (hard to verify externally), SSDP TTL value, self-contained shutdown via cancel_all inside stop() |
 | radio-behavior.md | ~7 claims | 5/7 | Retry behavior (loop simulation), full 128KB probe size |
 
 ## Known Gaps (Not Covered by Tests)
 - **Startup ordering**: the fixture tests the end result (correct port in SSDP) rather than the sequence
 - **Full 128KB probe size**: the radio probes 128KB; the test uses 16KB (limited by dummy data size)
+- **Footer early-return optimization**: not directly tested — benefits appear as reduced unnecessary buffer start/stop cycles, which is currently invisible in the test harness
+- **Condition-as-sole-lock refactor**: tested implicitly by all existing buffer tests continuing to pass with the simplified synchronization
 
 ## Fixture Lifecycle
 Each test gets a fresh server instance (new port, new forwarder, new UPnP device with unique UDN). The buffer background task starts with the server and is stopped during teardown. Fixture scope is `function` by default (pytest-asyncio default test loop scope).
+
+## Implementation Status
+
+**Status: CHANGED** — Coverage summary and known gaps have been updated to
+reflect the new spec changes.
+
+| Aspect | Status |
+|--------|--------|
+| All existing 30 tests | Implemented (passing) |
+| Coverage summary matches updated spec claims | **Spec changed — coverage doc updated, tests unchanged** |
+| `make_device_class` in `conftest.py` uses shared factory from `server.py` | **Spec changed, code not updated** |

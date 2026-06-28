@@ -10,7 +10,7 @@ The Reciva radio treats the stream as a file and requests ranges at increasing b
 
 ## Class: `StreamBuffer`
 
-An on-demand ``asyncio.Task`` that reads the remote stream and appends data to a ``bytearray``. Synchronization between the writer (``_run()``) and readers (``read()``) uses ``asyncio.Condition``, which wraps an ``asyncio.Lock`` and a condition variable, avoiding the TOCTOU race inherent in separate ``Lock + Event`` usage. The task only exists while clients are connected.
+An on-demand ``asyncio.Task`` that reads the remote stream and appends data to a ``bytearray``. Synchronization between the writer (``_run()``) and readers (``read()``) uses ``asyncio.Condition`` as the sole synchronization primitive (it wraps an ``asyncio.Lock`` + condition variable internally). There is no separate ``Lock`` — the writer acquires the ``Condition`` for both data mutation and waiter notification, avoiding the TOCTOU race inherent in separate ``Lock + Event`` usage. The task only exists while clients are connected.
 
 ### Constructor
 ```python
@@ -39,13 +39,14 @@ Cancels the background task, closes the `ClientSession` and `TCPConnector`. Call
     3. GET stream_url
     4. Read in 64 KB chunks
     5. For each chunk:
-       a. Acquire lock via asyncio.Condition
+       a. Acquire asyncio.Condition (sole lock)
        b. Extend bytearray buffer
        c. Increment total_bytes_read
        d. Trim buffer if > 4 MB (delete oldest bytes)
-       e. Release lock
-       f. Notify all waiters via asyncio.Condition.notify_all()
-       g. asyncio.sleep(0)
+       e. Notify all waiters via asyncio.Condition.notify_all()
+       f. Release asyncio.Condition (lock released automatically)
+       g. asyncio.sleep(0) — only yielded periodically (every N chunks, not every chunk)
+         to reduce event-loop overhead while still allowing readers to make progress
     6. On stream end: loop restarts (reconnect)
     7. On error: log, wait 5s, retry
     8. On cancel or _stopped: break out, close session/connector
@@ -88,7 +89,7 @@ StreamForwarder(stream_url: str, mime_type: str, verbose_logging: bool = False)
 - `mime_type`: MIME type of the stream (e.g. `"audio/mpeg"`; required, no default in code)
 - `verbose_logging`: If `True`, emit per-chunk progress DEBUG logs during streaming (every chunk until 2 KB sent, then every 512 KB). Default `False` to reduce log noise in normal operation.
 
-Internally creates a `StreamBuffer` instance. The buffer is **not started automatically** — it starts on first client connection. Also creates a `_disconnect_timer: asyncio.Task | None` for the grace period.
+Internally creates a `StreamBuffer` instance. The buffer is **not started automatically** — it starts on first client connection that actually needs buffer data (footer-only requests skip starting the buffer). See \"Footer Early-Return Optimization\" under `handle_request` below. Also creates a `_disconnect_timer: asyncio.Task | None` for the grace period.
 
 ### Properties
 - `active_connection_count -> int`: Number of currently active streaming connections.
@@ -107,7 +108,7 @@ Delegates to `StreamBuffer.stop()`.
 
 The buffer is started/stopped based on `_active_connections` and a configurable grace period:
 
-- **When `handle_request` is called**: If this is the first connection, ensure the buffer is running and cancel any pending disconnect timer (grace period).
+- **When `handle_request` is called with a buffer-range or full-stream request**: If this is the first connection, ensure the buffer is running and cancel any pending disconnect timer (grace period). Footer-only requests skip buffer lifecycle entirely.
 - **When a client disconnects** (`finally` block in handler): If this was the last connection, start a **disconnect timer** with the grace period timeout (default: 10 seconds) instead of stopping the buffer immediately.
 - **When the disconnect timer fires**: Stop the buffer (close remote connection, free resources).
 - **When a new client connects while the timer is pending**: Cancel the timer, buffer keeps running.
@@ -125,15 +126,24 @@ Main entry point for incoming HTTP requests. Manages buffer lifecycle and routin
 ```
 1. Track client connection (add task to _active_connections)
 2. Cancel any pending disconnect timer (grace period)
-3. If buffer is not running: start the buffer
-4. Route to appropriate handler:
-   ├── Footer range (range_end >= FOOTER_START) → _handle_footer_range()
+3. Parse Range header, if present:
+   ├── Range targets footer (range_end >= FOOTER_START) → skip buffer start,
+   │   serve from synthetic footer immediately, then exit
+   └── Range targets buffer data → proceed to step 4
+4. If buffer is not running: start the buffer
+5. Route to appropriate handler:
    ├── Buffer range (range_end < FOOTER_START)  → _handle_buffer_range()
    └── No Range header                          → _handle_full_stream()
-5. In finally: remove task from _active_connections
-6. If _active_connections is now empty: start the disconnect timer
+6. In finally: remove task from _active_connections
+7. If _active_connections is now empty: start the disconnect timer
    (buffer continues running during the grace period)
 ```
+
+**Footer early-return optimization**: The footer-range check happens **before** the buffer lifecycle logic. This avoids starting the ring buffer unnecessarily for synthetic footer probes. This matters because the Reciva radio sends two simultaneous parallel requests during probing:
+- Request A: `Range: bytes=0-131071` (first 128 KB) — needs the buffer
+- Request B: `Range: bytes=<end-128>-<end>` (last 129 bytes) — served from synthetic footer, no buffer needed
+
+Without this optimization, request B would start the buffer unnecessarily, and since B's handler exits before A connects, the buffer would start and then immediately enter the grace period (unnecessary start/stop cycle). With the optimization, only request A starts the buffer.
 
 Constants:
 - `_FAKE_CONTENT_LENGTH` = 1,415,577,600 (~24h of 128kbps MP3)
@@ -161,6 +171,7 @@ Returns the fake Content-Length constant (for tests).
 - Headers: `Content-Type`, `Content-Length` (fake), `Accept-Ranges: bytes`, `TransferMode.DLNA.ORG: Streaming`, `Cache-Control: no-cache`, `Content-Disposition`
 - Body: Reads sequentially from the ring buffer (`_buffer.read(bytes_sent, _BUFFER_SIZE)`), sending data indefinitely until client disconnects or the buffer stops (disconnect timer expires).
 - When `read()` returns empty bytes (timeout): checks `_buffer._stopped` and breaks if the buffer was stopped; otherwise yields control via `asyncio.sleep(0)` and retries.
+- `bytes_sent` is always defined in the ``try`` block before the ``finally`` handler (``_write_chunks_to_response`` always runs), so the ``finally`` can reference it directly without runtime introspection.
 
 #### `_handle_buffer_range(request, range_start, range_end) -> StreamResponse`
 - Status: `206 Partial Content` (or `416 Range Not Satisfiable` if offset trimmed)
@@ -233,3 +244,16 @@ Each streaming task is tracked in `_active_connections: set[asyncio.Task]`. This
 - Buffer offset trimmed: raises `ValueError`, caught and a `416 Range Not Satisfiable` response is returned with `Content-Range: bytes */{total}`
 - Remote stream connection failure in buffer: caught in `_run()` loop, retries after 5s
 - All forwarding tasks are `discard`ed from the set when they complete
+
+## Implementation Status
+
+**Status: CHANGED** — Specification has been updated with multiple refinements
+that are not yet reflected in the code.
+
+| Change | Status |
+|--------|--------|
+| `StreamBuffer` uses `asyncio.Condition` as sole lock (no separate `Lock`) | **Spec changed, code not updated** |
+| Writer yields via `asyncio.sleep(0)` periodically (every N chunks) instead of every chunk | **Spec changed, code not updated** |
+| Footer-range check before buffer lifecycle (footer early-return optimization) | **Spec changed, code not updated** |
+| `bytes_sent` in `_handle_full_stream` uses direct variable reference (no `dir()` introspection) | **Spec changed, code not updated** |
+| All other behavior (ring buffer, synthetic footer, grace period, connection tracking) | Implemented |

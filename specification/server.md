@@ -170,4 +170,25 @@ Returns dummy info with Status="OK", Direction="Output".
 
 ## UDN Generation
 
-The UDN is generated per-instance using `uuid.uuid4()`. A custom device class is created via `_make_device_class()` in `__main__.py` that overrides `DEVICE_DEFINITION` with a fresh UDN and the user-specified friendly name.
+The UDN is generated per-instance using `uuid.uuid4()`. A custom device class is created via `make_device_class()` (exported from `server.py`) that overrides `DEVICE_DEFINITION` with a fresh UDN and the user-specified friendly name. Both the production entry point (`__main__.py`) and test fixtures (`conftest.py`) import this factory from the same module, avoiding code duplication.
+
+```python
+def make_device_class(
+    friendly_name: str,
+    forwarders: list[StreamForwarder],
+    udn: str | None = None,
+) -> type:
+```
+
+## Implementation Status
+
+**Status: CHANGED** — Specification recommends extracting the device class factory
+from `__main__.py` into `server.py` so both production and tests import from the
+same module. This has not yet been done in code.
+
+| Aspect | Status |
+|--------|--------|
+| Device definition, services, routes | Implemented |
+| ContentDirectory Browse, Search, Get* actions | Implemented |
+| ConnectionManager GetProtocolInfo, GetCurrentConnection* | Implemented |
+| `make_device_class()` factory shared between production and tests | **Spec changed, code not updated** |

@@ -75,6 +75,28 @@ The server constructs a fake ID3v1.1 tag that starts with `TAG` magic bytes and 
 ### 5. Server Lifecycle Ordering
 The upstream `async_upnp_client` library creates the SSDP device before starting the HTTP server. When using port 0 (auto-assign), SSDP advertisements go out with `LOCATION: http://IP:0/device.xml` which is broken. The fix: determine the port first (via temporary socket binding if needed), create the device with the correct port, then start SSDP.
 
+### 6. Footer Early-Return Optimization
+The Reciva radio probes the stream with **two parallel HTTP requests**: one for the first 128 KB and one for the last 129 bytes (the synthetic footer). Only the first request needs the ring buffer — the footer is served from a pre-built in-memory buffer. The handler checks for a footer-targeted range **before** starting the buffer lifecycle, so the footer probe never triggers an unnecessary buffer start. See `forwarder.md` for details.
+
+### 7. Self-Contained Shutdown in `ServerHandle.stop()`
+`ServerHandle.stop()` is the single point of shutdown. It cancels all active streaming connections first, then stops buffers, SSDP, and HTTP — in that order. Callers need only call `stop()`; they do not need to call `cancel_all()` separately. This prevents the fragility of active connections running against a stopped buffer.
+
+## Implementation Status
+
+**Status: CHANGED** — Specification has been updated with two new design decisions
+(footer early-return optimization, self-contained shutdown) that are not yet
+reflected in the code.
+
+| Design Decision | Status |
+|-----------------|--------|
+| 1. Fake Content-Length | Implemented |
+| 2. Persistent Ring Buffer | Implemented |
+| 3. Hybrid Range Handling | Implemented |
+| 4. Synthetic ID3v1.1 Footer | Implemented |
+| 5. Server Lifecycle Ordering | Implemented |
+| 6. Footer Early-Return Optimization | **Spec changed, code not updated** |
+| 7. Self-Contained Shutdown | **Spec changed, code not updated** |
+
 ## Directories and Files
 
 ```

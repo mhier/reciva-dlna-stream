@@ -91,10 +91,13 @@ No network I/O involved — this reads the internal device configuration that th
 
 #### `async stop()`
 Shutdown sequence:
-1. Stop all stream buffers (for each forwarder: `forwarder.stop_buffer()`)
-2. Stop advertisement announcer (stop sending NOTIFY)
-3. Stop search responder (stop responding to M-SEARCH)
-4. Cleanup aiohttp AppRunner
+1. Cancel all active streaming connections (for each forwarder: `forwarder.cancel_all()`)
+2. Stop all stream buffers (for each forwarder: `forwarder.stop_buffer()`)
+3. Stop advertisement announcer (stop sending NOTIFY)
+4. Stop search responder (stop responding to M-SEARCH)
+5. Cleanup aiohttp AppRunner
+
+**Note**: `cancel_all()` is called first to terminate active streaming tasks cleanly. Without it, connections that are actively reading from the ring buffer would keep running against a stopped buffer, producing errors. The caller in ``__main__.py`` historically called ``cancel_all()`` separately before ``stop()`` — with this change it is self-contained inside ``ServerHandle.stop()``, making the API safer for external consumers.
 
 ## CLI Entry Point (`__main__.py`)
 
@@ -121,7 +124,7 @@ Shutdown sequence:
 5. Call `set_forwarders(forwarders)` on the device class constructor
 6. Call `start_server()` with all streams, forwarders, and parameters — this starts the HTTP server, SSDP, and all ring buffers
 7. Wait for SIGINT/SIGTERM
-8. Call `ServerHandle.stop()` to cleanly shut down (all buffers → SSDP → HTTP)
+8. Call `ServerHandle.stop()` to cleanly shut down (cancel connections → stop buffers → SSDP → HTTP)
 
 ### SSDP NOTIFY: `FastSsdpAdvertisementAnnouncer`
 
@@ -135,3 +138,15 @@ The upstream `SsdpAdvertisementAnnouncer` cycles through NT/USN pairs, sending *
 This means every beacon contains every NT/USN combination, so the radio discovers the server on the first beacon it receives.
 
 Network overhead: ~500 bytes × 5 entries / 5s = ~500 bytes/sec — negligible.
+
+## Implementation Status
+
+**Status: CHANGED** — `ServerHandle.stop()` now includes `cancel_all()` as the
+first shutdown step. This has not yet been reflected in code.
+
+| Aspect | Status |
+|--------|--------|
+| Port auto-assignment fix (temp socket) | Implemented |
+| FastSsdpAdvertisementAnnouncer (all entries per beacon) | Implemented |
+| Server startup sequence (port → device → HTTP → SSDP) | Implemented |
+| `ServerHandle.stop()` self-contained shutdown (cancel_all internal) | **Spec changed, code not updated** |
