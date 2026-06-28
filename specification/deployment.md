@@ -155,7 +155,8 @@ The project ships `deploy/install.sh` — a single bash script that fully instal
 | 10 | Default CLI_ARGS in env file | Enable the `--config` line in `/etc/default/reciva-dlna-stream` pointing to `/usr/local/etc/reciva-dlna-stream/config.json`. The script does this by uncommenting and editing the appropriate line in place. | No (re-applies) |
 | 11 | Daemon reload | Run `systemctl daemon-reload`. | ✅ (safe) |
 | 12 | Enable service | Run `systemctl enable reciva-dlna-stream`. | ✅ (idempotent) |
-| 13 | Fix file ownership | `chown -R` venv and config dirs to `reciva-dlna:reciva-dlna`; set unit/env file ownership to `root:reciva-dlna` with `chmod 644`. | ✅ (re-applies same) |
+| 13 | **Start/restart service** | Run `systemctl restart reciva-dlna-stream` (or `start` if the service is not yet active). This ensures the service starts immediately after install, whether fresh or upgrade. | ✅ (safe) |
+| 14 | Fix file ownership | `chown -R` venv and config dirs to `reciva-dlna:reciva-dlna`; set unit/env file ownership to `root:reciva-dlna` with `chmod 644`. | ✅ (re-applies same) |
 
 ### Idempotency
 
@@ -170,6 +171,7 @@ The install script is designed to be re-runnable. Operations that skip or safely
 | `sed -i` config substitution | Re-applies the same line |
 | `systemctl daemon-reload` | Safe to run repeatedly |
 | `systemctl enable` | Idempotent by design |
+| `systemctl start` / `systemctl restart` | Safe to run repeatedly. `start` fails gracefully if already running; the script uses `restart` if active, `start` otherwise. |
 | `chown` / `chmod` | Re-applies same permissions |
 
 This means administrators can re-run `deploy/install.sh` after pulling an updated repository to upgrade the service.
@@ -204,7 +206,7 @@ The user must:
 1. Have the project source code checked out.
 2. Run `sudo deploy/install.sh` from the repository root.
 
-The script does NOT start the service — the user should edit the config files first, then start manually.
+The script starts (or restarts) the service so it is active immediately after installation.
 
 ### Example Usage
 
@@ -221,13 +223,14 @@ sudo deploy/install.sh
 # [*] Environment file installed.
 # [*] Default config installed at /usr/local/etc/reciva-dlna-stream/config.json
 # [*] Service reciva-dlna-stream enabled.
+# [*] Service reciva-dlna-stream started.
 # [*] File ownership set.
 # [*] Installation complete!
 #
 # Next steps:
 #   1. Edit config:  sudo vi /usr/local/etc/reciva-dlna-stream/config.json
-#   2. Start:        sudo systemctl start reciva-dlna-stream
-#   3. Status:       sudo systemctl status reciva-dlna-stream
+#   2. Status:       sudo systemctl status reciva-dlna-stream
+#   3. Logs:         journalctl -u reciva-dlna-stream -f
 ```
 
 ## Manual Installation Procedure
