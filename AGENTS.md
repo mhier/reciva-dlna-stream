@@ -28,8 +28,10 @@ This file documents how the `reciva-dlna-stream` project has been developed in t
 Before editing any files, internalize this sequence — it **must** be followed for every feature change:
 
 1. **Commit after each layer** — req → spec → feat, in three separate commits. Do NOT batch edits across layers before committing.
-2. **Push when done** — after the last commit in the sequence, run `git push`. Do not wait for a reminder.
+2. **Push when layer chain is complete** — after the last commit in the sequence, run `git push`. Do not wait for a reminder. If you ever find yourself about to ask a question or get user feedback without having pushed, **push first**.
 3. **If in doubt, commit** — it's better to have too many small commits than one large one that mixes layers.
+
+> **Hard rule**: You MUST have zero uncommitted changes before taking any break, asking a question, or requesting user feedback. Always check `git status --short` before concluding any work unit. If there are uncommitted changes, commit them.
 
 ### Three-Layer Document Architecture
 
