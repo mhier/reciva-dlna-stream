@@ -20,7 +20,9 @@ internet traffic and CPU usage when no client is connected.
 Note: This project has been shamelessly vibe coded. I needed a quick solution to get
 my old Reciva radio working again (Sharpfin did not work for me, I somehow locked me
 out permanently). I hence do not claim this is my work, and I am not proud of it. I am
-also using it to try various techiques of improved vibe coding.
+also using it to try out various techiques of improved vibe coding. I think the result is
+good and actually usuable. Still I did not really check most code lines, so use it at
+your own risk.
 
 If you don't like this or if you are looking for a stable piece of software, stay away
 from it :-)
