@@ -135,14 +135,14 @@ The install script must create a dedicated Python virtual environment and instal
 
 **Status: ✅ Implemented**
 
-The install script must copy the systemd unit and environment file into their runtime locations and enable the service.
+The install script must copy the systemd unit and environment file into their runtime locations, enable the service, and (re)start it.
 
 ### Details
 - Copy `deploy/systemd/reciva-dlna-stream.service` → `/etc/systemd/system/reciva-dlna-stream.service` and replace `@ENTRY_POINT@` with the actual venv binary path.
 - Copy `deploy/systemd/reciva-dlna-stream.default` → `/etc/default/reciva-dlna-stream` (as a template; user edits later).
 - Run `systemctl daemon-reload`.
 - Run `systemctl enable reciva-dlna-stream`.
-- The service must not be started automatically by the install script — the user configures the environment file first, then starts manually.
+- Run `systemctl restart reciva-dlna-stream` (or `start` if the service is not yet running) to start the service immediately after installation. This ensures the service is active after the install script completes, whether this is a fresh install or an upgrade.
 
 ---
 
