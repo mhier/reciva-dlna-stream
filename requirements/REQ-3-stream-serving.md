@@ -21,7 +21,7 @@
 The server must advertise a `Content-Length` header on all stream responses, even though the underlying source is a live stream with no known length. This is required because Reciva radios reject streams without a declared size.
 
 ### Details
-- The Content-Length must be a large, fixed value (~1.4 GB = 24 hours of 128 kbps MP3).
+- The Content-Length must be a large, fixed value — large enough for ~24 hours of streaming at a typical bitrate (e.g. 128 kbps MP3).
 - The exact value must be consistent across all responses (200 and 206).
 - Content-Range headers (for 206 responses) must reflect this same total size.
 
@@ -36,9 +36,9 @@ A background task must read the remote Icecast/Shoutcast stream into an in-memor
 ### Details
 - The buffer must be a mutable byte container that supports appending new data and trimming from the front.
 - A background task must continuously read from the remote stream URL in chunks and append data to the buffer.
-- When the buffer exceeds **4 MB**, the oldest bytes must be trimmed (ring buffer behavior).
+- When the buffer exceeds a configurable maximum size (default: 4 MB), the oldest bytes must be trimmed (ring buffer behavior).
 - The buffer must track: total bytes ever read, current bytes in buffer.
-- Support reading from the buffer by byte offset with a configurable timeout (default: 30 s), returning data corresponding to the requested byte position in the "virtual file".
+- Readers must be able to request data by byte offset with a configurable timeout (default: 30 s), returning the corresponding portion of accumulated data.
 
 ### Grace Period (Keep-Alive Timeout)
 - **When the last client disconnects**, the buffer must NOT stop immediately.
@@ -55,15 +55,14 @@ A background task must read the remote Icecast/Shoutcast stream into an in-memor
   - Remote connection resources are still freed after a reasonable idle period.
   - The accumulated ring buffer data is available for the reconnecting client.
 
-### Buffer Read Logic
+### Buffer Read Behavior
 
-When a reader requests bytes at `offset` with a given `size`:
+When a reader requests bytes at a given offset:
 
-1. Determine whether the requested offset falls within the retained portion of the ring buffer.
-2. If it does and enough data is available: return the data immediately.
-3. If it does but only partial data is available: return what is available.
-4. If the offset was trimmed from the buffer (too old): raise an error.
-5. If the offset is beyond what has been read so far: wait for the buffer to advance (with a timeout), then retry.
+- If the offset falls within the data still retained in the buffer and enough data is available: return the requested data.
+- If the offset falls within retained data but only partial data is available: return what is available.
+- If the offset has been trimmed (too old to be in the buffer): signal an error to the reader.
+- If the offset is beyond what the remote stream has provided so far: wait for more data (with a timeout).
 
 ---
 
@@ -75,9 +74,8 @@ The server must handle HTTP Range requests (`Range: bytes=...`). Reciva radios r
 
 ### Details
 - The server must parse the `Range` header into `(start, end)` byte range.
-- Two types of range requests must be handled:
-1. **Buffer ranges** (requests that lie entirely within the real stream data): Serve data from the ring buffer at the requested offset.
-2. **Footer ranges** (requests that overlap or lie within the synthetic footer region): Serve synthetic data (the ID3v1.1 footer) — no buffer I/O needed.
+- Requests that overlap with the synthetic footer region must return the appropriate slice of synthetic footer data, without reading from the buffer.
+- Requests entirely within the buffered stream data must serve data from the ring buffer at the requested offset.
 - All range responses must be `206 Partial Content` with a valid `Content-Range` header.
 - The `Content-Range` must be in the format: `bytes start-end/total` (where total is the fake Content-Length).
 
@@ -102,23 +100,18 @@ When no `Range` header is present, the server must serve the stream as a full-le
 
 **Status: ✅ Implemented**
 
-The server must fabricate a valid 129-byte MPEG audio file footer (1 byte of frame end + 128-byte ID3v1.1 tag) so that Reciva radios can validate the declared Content-Length.
+The server must fabricate a valid MPEG audio file footer (with an ID3v1.1 tag) so that Reciva radios can validate the declared Content-Length.
 
 ### Details
-- The fake "end of file" is at byte position `FAKE_CONTENT_LENGTH - 129` (i.e., `_FOOTER_START`).
-- The first byte is `0x00` (simulating the last byte of an MP3 frame).
-- The remaining 128 bytes form a valid ID3v1.1 tag:
-  - `TAG` magic bytes at offset 0.
-  - Title (30 bytes): "Internet Radio" (null-padded).
-  - Artist (30 bytes): empty (null-padded).
-  - Album (30 bytes): empty (null-padded).
-  - Year (4 bytes): current year (e.g. "2026"), null-padded.
-  - Comment (28 bytes): empty (null-padded).
-  - Null separator (1 byte): `0x00` (indicates ID3v1.1).
-  - Track number (1 byte): `0x01`.
-  - Genre code (1 byte): `0xFF` (unknown).
-- When a range request fully or partially covers the footer range, the server must compute the intersection and return the corresponding slice of the synthetic footer.
-- No network I/O or buffer access is needed for footer ranges.
+- The footer must be placed at byte position `FAKE_CONTENT_LENGTH - 129` (the very end of the virtual file).
+- The first byte must simulate the end of an MP3 frame.
+- The remaining 128 bytes must form a valid ID3v1.1 tag with:
+  - A recognizable title (e.g. "Internet Radio").
+  - The current year.
+  - A track number.
+  - All other standard ID3v1.1 fields populated with sensible defaults.
+- When a range request covers the footer region, the server must return the intersecting portion of the synthetic footer.
+- Serving the footer must not require any network I/O.
 
 ---
 
@@ -130,10 +123,7 @@ Every request for the same byte position N must return the exact same bytes, reg
 
 ### Details
 - This is the fundamental reason for the ring buffer: without it, two requests for byte 0 at different times would get different data from the live stream.
-  - The ring buffer must be long enough (4 MB) to cover the Reciva radio's probing and playback pattern:
-  - First ~256 KB range request (bytes 0-262143)
-  - Followed by ~128 KB ranges (bytes 262144-393215, etc.)
-  - Plus the end-of-file probe (last 129 bytes)
+  - The ring buffer must be long enough (e.g. 4 MB) to cover the Reciva radio's probing and playback pattern: an initial range request of a few hundred KB, followed by smaller sequential ranges, plus an end-of-file probe.
 - As long as the reader stays within the buffered window, all reads are consistent.
 
 ---
@@ -148,7 +138,7 @@ The server must track all active streaming connections (HTTP response tasks) for
 - Each streaming response must be tracked as a cancellable unit of work.
 - The server must expose a count of active connections.
 - On shutdown, all active connections must be cancelled.
-- Tracking must be cleaned up reliably when a streaming response ends (cleanup must not rely solely on async callbacks, which may not fire during iteration on shutdown).
+- Tracking must be cleaned up reliably when a streaming response ends, even during shutdown.
 
 ---
 

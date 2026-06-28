@@ -19,13 +19,13 @@ The server must start its components in the correct order so that SSDP advertise
 
 ### Details
 The correct startup sequence is:
-1. **Determine the HTTP port** — If port 0 is given, bind a temporary socket to find a free port, then release it.
+1. **Determine the HTTP port** — If port 0 is requested, find a free port before creating any UPnP components.
 2. **Build the UPnP device** — Create the device with the actual port in its base URL.
-3. **Start the HTTP server** — Bind the aiohttp server to the determined port.
+3. **Start the HTTP server** — Bind to the determined port.
 4. **Start SSDP** — Start the search responder and advertisement announcer (now the LOCATION URL contains the correct port).
 5. **Start stream buffers** — Begin reading from the remote internet radio stream into the ring buffers.
 
-This ordering is the opposite of what the upstream UPnP library does by default (which starts SSDP before HTTP). The fix requires building the device and HTTP server manually before starting SSDP.
+The server must not rely on the upstream UPnP library's default startup order, which advertises before the HTTP port is known.
 
 ---
 
@@ -56,9 +56,7 @@ Required CLI arguments:
 When port 0 is specified (or no port is given), the server must find a free TCP port and use it.
 
 ### Details
-- The server must temporarily bind a socket to `port 0`, read the assigned port, close the socket, then use that port for the HTTP server.
-- This must happen before the UPnP device is created (so the LOCATION URL is correct) and before SSDP starts.
-- The auto-assigned port must be reported in the startup log.
+- The server must find a free TCP port, report it in the startup log, and use it for the HTTP server — all before the UPnP device is created and SSDP starts.
 
 ---
 
@@ -87,7 +85,7 @@ The simplest way to use the server is with a single stream URL, name, and MIME t
 ### Details
 - When `--stream-url` is provided on the command line, the server creates exactly one stream.
 - The friendly name and MIME type are configurable via `--name` and `--mime-type`.
-- In single-stream mode, the legacy `/stream` route (without index suffix) must also be available for backward compatibility.
+- For a single stream, the server must also serve the stream at a shorter, backward-compatible route (e.g. `/stream`) in addition to the indexed route (`/stream/0`).
 
 ---
 

@@ -124,11 +124,10 @@ There must be an install script (`deploy/install.sh`) that checks it is running 
 The install script must create a dedicated Python virtual environment and install the package into it, rather than installing system-wide. This is required to comply with PEP 668 (externally-managed-environment), which is enforced by Debian 13+.
 
 ### Details
-- The virtual environment shall be created at `/usr/local/lib/reciva-dlna-stream/venv/` using `python3 -m venv`.
-- The package shall be installed into this venv using the venv's pip: `${VENV_DIR}/bin/pip install .`.
-- The entry point path is `${VENV_DIR}/bin/reciva-dlna-stream`.
-- The install script substitutes the entry point path into the systemd unit file by replacing the `@ENTRY_POINT@` placeholder. This is done during the unit file copy step, so the resulting unit file contains a hardcoded absolute path.
-- Config files go to `/usr/local/etc/reciva-dlna-stream/` (unchanged from GNU standard layout).
+- The virtual environment shall be created at a standard system location (e.g. `/usr/local/lib/reciva-dlna-stream/venv/`).
+- The package shall be installed into this venv.
+- The install script substitutes the entry point path into the systemd unit file by replacing a placeholder, resulting in a hardcoded absolute path.
+- Config files go to `/usr/local/etc/reciva-dlna-stream/` (GNU standard layout).
 
 ---
 
@@ -169,17 +168,10 @@ The server must run under a dedicated non-root system user (`reciva-dlna`) inste
 
 ### Details
 - The systemd unit file must set `User=reciva-dlna` and `Group=reciva-dlna` in the `[Service]` section.
-- The install script must create the system user and group if they do not already exist.
-- User creation: `useradd --system --no-create-home --gid reciva-dlna --home-dir /var/lib/reciva-dlna-stream --comment "Reciva DLNA Stream Server" reciva-dlna`
-- Group creation: `groupadd --system reciva-dlna`
-- A state directory at `/var/lib/reciva-dlna-stream/` must be created and owned by `reciva-dlna:reciva-dlna` with permissions `750`.
-- The install script must set ownership of all installed files:
-  - `/usr/local/lib/reciva-dlna/` (venv) → `reciva-dlna:reciva-dlna`
-  - `/usr/local/etc/reciva-dlna-stream/` (config) → `reciva-dlna:reciva-dlna`
-  - `/etc/systemd/system/reciva-dlna-stream.service` → `root:reciva-dlna`
-  - `/etc/default/reciva-dlna-stream` → `root:reciva-dlna`
-  - `/var/lib/reciva-dlna-stream/` (state dir) → `reciva-dlna:reciva-dlna`
-- The systemd unit file must also set `WorkingDirectory=/var/lib/reciva-dlna-stream` so the service's working directory is the state dir.
+- The install script must create the system user and group if they do not already exist, using standard system commands.
+- A state directory (e.g. `/var/lib/reciva-dlna-stream/`) must be created and owned by the service user with restricted permissions.
+- The install script must set appropriate ownership on all installed files.
+- The systemd unit file must set `WorkingDirectory` to the state directory.
 
 ---
 
@@ -190,10 +182,11 @@ The server must run under a dedicated non-root system user (`reciva-dlna`) inste
 The install script must be idempotent — re-running it must be safe and should only create or fix what is missing or incorrect.
 
 ### Details
-- User/group creation must check existence (e.g. `getent passwd` / `getent group`) before attempting to create.
-- State directory creation must check existence (`[ -d "$STATE_DIR" ]`) before creating.
-- File copy operations with `cp` are not idempotent internally but will overwrite with the latest version (acceptable for upgrades).
-- `chown`/`chmod` operations are safe to re-run as they re-apply the same permissions.
-- `systemctl daemon-reload` and `systemctl enable` are idempotent by design.
-- Important variables like user/group names, paths, and comments must not change between runs (remain constant via variable references).
+- User/group creation must check existence before attempting to create.
+- State directory creation must check existence before creating.
+- File copy operations may overwrite with the latest version (acceptable for upgrades).
+- Permission and ownership operations are safe to re-run.
+- Systemd commands (`daemon-reload`, `enable`) are idempotent by design.
+- Important variables like user/group names and paths must not change between runs (remain constant).
 - All operations that could fail on re-run must be guarded (e.g. `getent` check before `useradd`).
+n must be guarded (e.g. `getent` check before `useradd`).

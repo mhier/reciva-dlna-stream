@@ -78,8 +78,8 @@ The server must be robust against expected failure scenarios.
 - Client disconnect mid-stream: catch `ConnectionResetError`/`ConnectionAbortedError`, clean up task.
 - Buffer timeout when waiting for data: return empty bytes, let the client decide what to do.
 - Buffer offset trimmed (data unavailable because buffer is full and old data was discarded): raise error, log, close connection.
-- All streaming tasks must be tracked and cleaned up in `finally` blocks.
-- Use `_LOGGER.exception()` for unexpected exceptions.
+- All streaming tasks must be tracked and cleaned up reliably (no orphaned tasks).
+- Unexpected exceptions must be logged with their full traceback for debugging.
 
 ---
 

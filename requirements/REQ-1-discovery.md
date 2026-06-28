@@ -31,9 +31,9 @@ The server MUST announce itself as a UPnP MediaServer device on the local networ
 The server must send periodic SSDP NOTIFY `ssdp:alive` messages so that clients discover it without actively searching.
 
 ### Details
-- NOTIFY multicast messages must be sent to `239.255.255.250:1900` every 5 seconds.
-- All NT/USN entries (rootdevice, UUID, device type, ContentDirectory:1, ConnectionManager:1) are sent in a single burst per interval — no cycling.
+- NOTIFY multicast messages must be sent to `239.255.255.250:1900` frequently enough that Reciva radios discover the server promptly (recommended interval: every 5 seconds).
 - Messages must include the LOCATION URL pointing to the device description XML.
+- All standard NT/USN entries (rootdevice, UUID, device type, ContentDirectory:1, ConnectionManager:1) must be advertised.
 - On shutdown, the server must send `ssdp:byebye` messages to allow clients to promptly remove it from their device list.
 
 ---
@@ -78,9 +78,9 @@ The server must serve a valid UPnP device description XML (`/device.xml`) that d
 The SSDP LOCATION URL must contain the correct IP and port of the HTTP server.
 
 ### Details
-- The server binds to port 0 (auto-assign) by default. Before SSDP starts, the actual port must be determined so the LOCATION URL is correct.
+- The server binds to port 0 (auto-assign) by default. The LOCATION URL must contain the actual port, not 0.
 - The IP address in the LOCATION URL must be the server's local network IP (not 127.0.0.1), auto-detected at startup.
-- This is a critical fix: the upstream `async_upnp_client` library starts SSDP before the HTTP server, which produces `LOCATION: http://IP:0/device.xml` when using port auto-assignment.
+- The startup sequence must guarantee that the LOCATION URL is correct before SSDP begins advertising.
 
 ---
 
