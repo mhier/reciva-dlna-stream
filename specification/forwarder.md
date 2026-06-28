@@ -10,7 +10,7 @@ The Reciva radio treats the stream as a file and requests ranges at increasing b
 
 ## Class: `StreamBuffer`
 
-An on-demand ``asyncio.Task`` that reads the remote stream and appends data to a ``bytearray`` protected by an ``asyncio.Lock``. The task only exists while clients are connected.
+An on-demand ``asyncio.Task`` that reads the remote stream and appends data to a ``bytearray``. Synchronization between the writer (``_run()``) and readers (``read()``) uses ``asyncio.Condition``, which wraps an ``asyncio.Lock`` and a condition variable, avoiding the TOCTOU race inherent in separate ``Lock + Event`` usage. The task only exists while clients are connected.
 
 ### Constructor
 ```python
@@ -36,19 +36,19 @@ Cancels the background task, closes the `ClientSession` and `TCPConnector`. Call
 ```
 1. Create aiohttp.ClientSession + TCPConnector
 2. loop:
-   3. GET stream_url
-   4. Read in 64 KB chunks
-   5. For each chunk:
-      a. Acquire lock
-      b. Extend bytearray buffer
-      c. Increment total_bytes_read
-      d. Trim buffer if > 4 MB (delete oldest bytes)
-      e. Release lock
-      f. Set asyncio.Event (wake up waiters)
-      g. asyncio.sleep(0)
-   6. On stream end: loop restarts (reconnect)
-   7. On error: log, wait 5s, retry
-   8. On cancel or _stopped: break out, close session/connector
+    3. GET stream_url
+    4. Read in 64 KB chunks
+    5. For each chunk:
+       a. Acquire lock via asyncio.Condition
+       b. Extend bytearray buffer
+       c. Increment total_bytes_read
+       d. Trim buffer if > 4 MB (delete oldest bytes)
+       e. Release lock
+       f. Notify all waiters via asyncio.Condition.notify_all()
+       g. asyncio.sleep(0)
+    6. On stream end: loop restarts (reconnect)
+    7. On error: log, wait 5s, retry
+    8. On cancel or _stopped: break out, close session/connector
 ```
 
 ### Read Interface
@@ -56,18 +56,27 @@ Cancels the background task, closes the `ClientSession` and `TCPConnector`. Call
 #### `async read(offset, size, timeout=30.0) -> bytes`
 Reads `size` bytes starting at `offset` from the buffer.
 
+Implemented using ``asyncio.Condition``, which wraps a lock and a condition
+variable. This avoids the classic TOCTOU race of ``Lock + Event`` where data
+could arrive between releasing the lock and calling ``event.wait()``.
+
 Logic:
-1. Calculate `local_offset` = where this offset sits in the current buffer:
-   `local_offset = len(buffer) - (total_read - offset)`
-2. If `local_offset >= 0` and enough data available → return slice immediately
-3. If `local_offset >= 0` but partial → return what's available
-4. If `local_offset < 0`: offset has been trimmed from the buffer → raise `ValueError`
-5. Otherwise: wait on `asyncio.Event` for more data, retry until timeout
-   - Uses `asyncio.wait_for(event.wait(), timeout=...)` with a dynamic timeout
-   - Catches `TimeoutError`/`asyncio.TimeoutError` from `wait_for` and falls through
-     to the deadline check at step 6 (Python 3.12 raises `TimeoutError` rather
-     than `asyncio.TimeoutError`)
-6. If deadline exceeded: log warning, return `b""`
+1. Acquire the condition's lock (mutual exclusion with the writer).
+2. If ``offset < total_read``: data at this position has (or had) been read from
+   the remote stream.
+   a. Calculate ``local_offset = len(buffer) - (total_read - offset)``.
+   b. If ``local_offset >= 0`` and enough data available → return slice immediately.
+   c. If ``local_offset >= 0`` but partial → return what's available.
+   d. If ``local_offset < 0``: offset has been trimmed from the buffer → raise
+      ``ValueError``.
+3. If ``offset >= total_read``: the requested position hasn't been reached yet;
+   fall through to waiting.
+4. Wait on ``asyncio.Condition.wait()`` for more data, looping until deadline.
+   - ``Condition.wait()`` atomically releases the lock and suspends, avoiding
+     the race between checking state and starting to wait.
+   - Uses ``asyncio.wait_for(condition.wait(), timeout=...)`` with a dynamic timeout.
+   - Catches ``asyncio.TimeoutError`` and falls through to the deadline check.
+5. If deadline exceeded: log warning at ``WARNING`` level, return ``b""``.
 
 ## Class: `StreamForwarder`
 
@@ -198,9 +207,8 @@ Offset  Length  Content
 3       30      Title (null-padded) → "Internet Radio"
 33      30      Artist (null-padded) → empty
 63      30      Album (null-padded) → empty
-| `_CURRENT_YEAR` | `datetime.datetime.now().year` | Computed at import time, encoded as ASCII, used in ID3v1 tag |
 
-93      4       Year → current year (computed at import time)
+93      4       Year → current year (computed at call time via ``datetime.datetime.now().year``)
 97      28      Comment (null-padded)
 125     1       Null separator (0x00 = ID3v1.1)
 126     1       Track number → 1
