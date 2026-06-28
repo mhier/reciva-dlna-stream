@@ -140,11 +140,11 @@ Each test gets a fresh server instance (new port, new forwarder, new UPnP device
 
 ## Implementation Status
 
-**Status: CHANGED** — Coverage summary and known gaps have been updated to
-reflect the new spec changes.
+**Status: Implemented** — All described features are implemented in code and
+covered by tests.
 
 | Aspect | Status |
 |--------|--------|
 | All existing 30 tests | Implemented (passing) |
-| Coverage summary matches updated spec claims | **Spec changed — coverage doc updated, tests unchanged** |
-| `make_device_class` in `conftest.py` uses shared factory from `server.py` | **Spec changed, code not updated** |
+| Coverage summary matches updated spec claims | Implemented |
+| `make_device_class` in `conftest.py` uses shared factory from `server.py` | Implemented |

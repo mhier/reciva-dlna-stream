@@ -83,9 +83,7 @@ The Reciva radio probes the stream with **two parallel HTTP requests**: one for 
 
 ## Implementation Status
 
-**Status: CHANGED** — Specification has been updated with two new design decisions
-(footer early-return optimization, self-contained shutdown) that are not yet
-reflected in the code.
+**Status: Implemented** — All described design decisions are implemented in code.
 
 | Design Decision | Status |
 |-----------------|--------|
@@ -94,8 +92,8 @@ reflected in the code.
 | 3. Hybrid Range Handling | Implemented |
 | 4. Synthetic ID3v1.1 Footer | Implemented |
 | 5. Server Lifecycle Ordering | Implemented |
-| 6. Footer Early-Return Optimization | **Spec changed, code not updated** |
-| 7. Self-Contained Shutdown | **Spec changed, code not updated** |
+| 6. Footer Early-Return Optimization | Implemented |
+| 7. Self-Contained Shutdown | Implemented |
 
 ## Directories and Files
 
