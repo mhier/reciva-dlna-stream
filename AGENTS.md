@@ -14,11 +14,12 @@ This file documents how the `reciva-dlna-stream` project has been developed in t
 ### Session Flow
 1. **Understand the problem**: Start by reading the existing codebase, project memory, and any user-provided logs
 2. **Save key context to memory**: Non-obvious findings, radio behavior, architecture decisions → saved to `memory/project.md`
-3. **Update requirements if needed**: If the user has changed requirements (edited `requirements/REQ-*.md`), derive corresponding changes in the specification files
-4. **Update specifications**: Before each significant change, update the `specification/*.md` files to reflect the new design
-5. **Implement iteratively**: Write tests according to updated specifications, make changes to the implementation, run tests, fix issues
-6. **Verify requirements coverage**: After implementation, check that the `requirements/REQ-*.md` status markers match actual implementation state
-7. **Save to memory before session end**: Important project context must not be lost
+3. **Discuss requirements with the user**: The human describes desired changes verbally (not by editing files). Ask clarifying questions until the requirements are fully specified.
+4. **Update requirement files**: Once requirements are clear, update the `requirements/REQ-*.md` files with the new/changed requirements and appropriate status markers. **Commit** with a message like `req: <description>`.
+5. **Update specifications**: Determine which `specification/*.md` files need changes, update them to reflect the new design. **Commit** with a message like `spec: <description>`.
+6. **Implement iteratively**: Write tests according to updated specifications, make changes to the implementation, run tests, fix issues. **Commit** with a message like `feat: <description>`.
+7. **Verify requirements coverage**: After implementation, check that the `requirements/REQ-*.md` status markers match actual implementation state. Make any needed corrections in a fixup commit.
+8. **Save to memory before session end**: Important project context must not be lost
 
 ### Three-Layer Document Architecture
 
@@ -40,7 +41,7 @@ Requirements  ──(LLM derives)──→  Specifications  ──(LLM + tests)�
 | ⬜ Not Started | Not implemented yet |
 | ❌ Not applicable | Process requirement, not a feature |
 
-- **Edited by the human** to define or change features.
+- **Edited by the agent after discussion with the user** to define or change features.
 - The single source of truth for *intended behavior*.
 
 #### Layer 2: Specifications (`specification/*.md`)
@@ -55,11 +56,28 @@ Requirements  ──(LLM derives)──→  Specifications  ──(LLM + tests)�
 
 ### Requirements-Driven Development Workflow
 
-When the human wants a feature change:
+When the user wants a feature change:
 
-1. **Human edits `requirements/REQ-*.md`** — adds new requirements, changes existing ones, updates status markers to ⬜ Not Started for new work.
-2. **LLM (you) derives specification changes** — reads the updated requirements, determines which spec files need changes, updates them to reflect the new design.
-3. **Separate LLM instance implements** — reads the updated specs, implements the code, updates requirement status markers to ✅ Implemented.
+1. **User describes desired changes** — verbally, through discussion with the agent. No direct file edits by the user.
+2. **Agent clarifies** — asks questions until the requirements are fully specified and unambiguous.
+3. **Agent writes requirement files** — updates `requirements/REQ-*.md` with new/changed requirements and sets status markers to ⬜ Not Started (or 🚧 In Progress for active work).
+4. **Agent derives specification changes** — reads the updated requirements, determines which spec files need changes, updates them to reflect the new design.
+5. **Agent implements** — writes tests, implements the code, runs tests, fixes issues.
+6. **Agent updates status markers** — after implementation, verifies each requirement is covered and marks as ✅ Implemented.
+
+### Git Commit Discipline
+
+Each unit of work follows a strict commit sequence:
+
+```
+[req]  <description>      # requirement file changes only
+[spec] <description>      # specification file changes only
+[feat] <description>      # implementation + tests
+```
+
+- **Atomic changes**: If a session involves multiple independent aspects (e.g. two separate feature changes, or multiple points in a refactoring plan), each aspect gets its own sequence of commits.
+- **Squash fixups**: If the implementation reveals a spec/req mistake, amend or fixup into the relevant commit rather than creating a separate one.
+- **Commit messages**: Use conventional commit prefixes (`req:`, `spec:`, `feat:`, `fix:`, `test:`, `chore:`).
 
 ### Keeping Requirements in Sync
 
@@ -82,6 +100,8 @@ To derive specification changes from requirements changes:
 2. For each new/changed requirement, determine which spec files are affected.
 3. Update the affected spec files with the new design detail.
 4. Ensure the spec is still detailed enough to reimplement from.
+
+New spec changes should be committed separately from the req changes. See [Git Commit Discipline](#git-commit-discipline).
 
 ### User's Communication Style
 - Concise, direct. No pleasantries needed.
