@@ -8,8 +8,10 @@ This file documents how the `reciva-dlna-stream` project has been developed in t
 - **Always use the project's virtual environment**: `/home/mhier/compile/dlna-stream/.venv/bin/python`
   - Never install packages globally (no `pip install --break-system-packages` or system pip)
   - To run tests: `.venv/bin/python -m pytest tests/ -v`
+  - To run static analysis (mypy): `.venv/bin/python -m mypy reciva_dlna_stream/`
+  - To run **both** (standard pre-flight): `.venv/bin/python -m pytest tests/ -v && .venv/bin/python -m mypy reciva_dlna_stream/`
   - To run the server: `.venv/bin/python -m reciva_dlna_stream --stream-url ...`
-  - The `.venv` already has all dependencies installed (`aiohttp`, `async_upnp_client`, `pytest`)
+  - The `.venv` already has all dependencies installed (`aiohttp`, `async_upnp_client`, `pytest`, `mypy`)
 
 ### Session Flow
 1. **Understand the problem**: Start by reading the existing codebase, project memory, and any user-provided logs
@@ -17,7 +19,7 @@ This file documents how the `reciva-dlna-stream` project has been developed in t
 3. **Discuss requirements with the user**: The human describes desired changes verbally (not by editing files). Ask clarifying questions until the requirements are fully specified.
 4. **Update requirement files**: Once requirements are clear, update the `requirements/REQ-*.md` files with the new/changed requirements and appropriate status markers. **Commit** with a message like `req: <description>`.
 5. **Update specifications**: Determine which `specification/*.md` files need changes, update them to reflect the new design. **Commit** with a message like `spec: <description>`.
-6. **Implement iteratively**: Write tests according to updated specifications, make changes to the implementation, run tests, fix issues. **Commit** with a message like `feat: <description>`.
+6. **Implement iteratively**: Write tests according to updated specifications, make changes to the implementation, run tests + mypy, fix issues. **Commit** with a message like `feat: <description>`.
 7. **Verify requirements coverage**: After implementation, check that the `requirements/REQ-*.md` status markers match actual implementation state. Make any needed corrections in a fixup commit.
 8. **Save to memory before session end**: Important project context must not be lost
 
