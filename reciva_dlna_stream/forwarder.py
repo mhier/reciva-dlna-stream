@@ -96,8 +96,8 @@ class StreamBuffer:
         self._buffer = bytearray()
         self._total_read: int = 0
         self._task: asyncio.Task[None] | None = None
-        self._event = asyncio.Event()
         self._lock = asyncio.Lock()
+        self._condition = asyncio.Condition(self._lock)
         self._stopped = False
         # Created in _run(), closed in _close_session()
         self._connector: aiohttp.TCPConnector | None = None
@@ -112,13 +112,15 @@ class StreamBuffer:
         self._stopped = False
         self._buffer = bytearray()
         self._total_read = 0
-        self._event = asyncio.Event()
         self._task = asyncio.create_task(self._run())
 
     async def stop(self) -> None:
         """Stop the background buffer task."""
         self._stopped = True
-        self._event.set()  # wake any waiting readers so they can exit
+        # Wake any readers waiting on the condition so they can check
+        # self._stopped and exit cleanly.
+        async with self._condition:
+            self._condition.notify_all()
         if self._task is not None:
             self._task.cancel()
             try:
@@ -151,6 +153,11 @@ class StreamBuffer:
     def is_running(self) -> bool:
         """Whether the buffer background task is currently running."""
         return self._task is not None
+
+    @property
+    def is_stopped(self) -> bool:
+        """Whether the buffer has been stopped."""
+        return self._stopped
 
     # ------------------------------------------------------------------
     # Background reader
@@ -207,7 +214,8 @@ class StreamBuffer:
                                         "Buffer: trimmed %d bytes", excess
                                     )
 
-                            self._event.set()
+                            async with self._condition:
+                                self._condition.notify_all()
 
                             await asyncio.sleep(0)
 
@@ -243,10 +251,18 @@ class StreamBuffer:
         Blocks until the requested data is available or *timeout* expires.
         Returns the requested bytes (may be shorter than *size* if the
         stream ends or timeout occurs).
+
+        Uses ``asyncio.Condition`` to wait atomically for new data, avoiding
+        the race where data arrives between a wake-up and re-checking the
+        buffer state.
         """
         deadline = asyncio.get_running_loop().time() + timeout
-        while True:
-            async with self._lock:
+        async with self._condition:
+            while True:
+                # Check if stopped — allows readers to exit during shutdown
+                if self._stopped:
+                    return b""
+
                 if offset < self._total_read:
                     # offset is within what we've read from remote
                     local_offset = len(self._buffer) - (
@@ -268,26 +284,27 @@ class StreamBuffer:
                             f"{self._total_read - len(self._buffer)})"
                         )
 
-            if asyncio.get_running_loop().time() >= deadline:
-                _LOGGER.warning(
-                    "Buffer read timeout: offset=%d size=%d "
-                    "buffered=%d total_read=%d",
-                    offset,
-                    size,
-                    len(self._buffer),
-                    self._total_read,
-                )
-                return b""
+                if asyncio.get_running_loop().time() >= deadline:
+                    _LOGGER.warning(
+                        "Buffer read timeout: offset=%d size=%d "
+                        "buffered=%d total_read=%d",
+                        offset,
+                        size,
+                        len(self._buffer),
+                        self._total_read,
+                    )
+                    return b""
 
-            try:
-                await asyncio.wait_for(
-                    self._event.wait(), timeout=max(0.1, deadline - asyncio.get_running_loop().time())
-                )
-            except asyncio.TimeoutError:
-                pass
-            # Clear the event so we don't spin — if new data arrives,
-            # _run() will set() it again and wake us.
-            self._event.clear()
+                try:
+                    # Wait on both the condition (for new data) and the stop
+                    # event (for shutdown).  Condition.wait() releases the
+                    # lock, so _run() can notify.
+                    await asyncio.wait_for(
+                        self._condition.wait(),
+                        timeout=max(0.1, deadline - asyncio.get_running_loop().time()),
+                    )
+                except asyncio.TimeoutError:
+                    pass
 
     @property
     def lock(self) -> asyncio.Lock:
@@ -298,12 +315,12 @@ class StreamBuffer:
         """Inject data directly into the buffer (for test use).
 
         This simulates what _run() does but without an actual remote
-        connection. Acquires the lock internally.
+        connection. Acquires the lock via the condition internally.
         """
-        async with self._lock:
+        async with self._condition:
             self._buffer.extend(data)
             self._total_read += len(data)
-        self._event.set()
+            self._condition.notify_all()
 
 
 class StreamForwarder:

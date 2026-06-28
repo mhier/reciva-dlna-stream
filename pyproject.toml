@@ -13,6 +13,13 @@ dependencies = [
 [project.scripts]
 reciva-dlna-stream = "reciva_dlna_stream.__main__:main"
 
+[project.optional-dependencies]
+dev = [
+    "mypy",
+    "pytest-asyncio",
+    "pytest-timeout",
+]
+
 [build-system]
 requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
@@ -31,3 +38,21 @@ filterwarnings = [
     # library — not actionable in our project.
     "ignore:Testing an element's truth value:DeprecationWarning",
 ]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+explicit_package_bases = true
+
+# Upstream async_upnp_client has incomplete type stubs — suppress
+# unavoidable errors caused by its type definitions.
+[[tool.mypy.overrides]]
+module = [
+    "reciva_dlna_stream.server",
+    "reciva_dlna_stream.server_lifecycle",
+    "reciva_dlna_stream.__main__",
+    "tests.*",
+]
+ignore_errors = true
