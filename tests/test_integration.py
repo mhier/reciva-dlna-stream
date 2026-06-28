@@ -639,7 +639,7 @@ async def test_connection_manager_multi_mime_distinct(
     from reciva_dlna_stream.server import MediaServerDevice
     from reciva_dlna_stream.server_lifecycle import start_server
     from reciva_dlna_stream.stream_config import StreamConfig
-    from tests.conftest import make_device_class
+    from conftest import make_device_class
 
     # Create forwarders with different MIME types
     fwd_mpeg = StreamForwarder(stream_url=fake_radio_url, mime_type="audio/mpeg")
