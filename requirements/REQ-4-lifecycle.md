@@ -25,7 +25,7 @@ The correct startup sequence is:
 4. **Start SSDP** — Start the search responder and advertisement announcer (now the LOCATION URL contains the correct port).
 5. **Start stream buffers** — Begin reading from the remote internet radio stream into the ring buffers.
 
-This ordering is the opposite of what the upstream `async_upnp_client` library does by default (which starts SSDP before HTTP). The fix requires building the device and HTTP server manually before starting SSDP.
+This ordering is the opposite of what the upstream UPnP library does by default (which starts SSDP before HTTP). The fix requires building the device and HTTP server manually before starting SSDP.
 
 ---
 
@@ -36,7 +36,7 @@ This ordering is the opposite of what the upstream `async_upnp_client` library d
 The server must provide a command-line interface for configuration and starting.
 
 ### Details
-The server is started as a Python module: `python -m reciva_dlna_stream` (or via a wrapper script).
+The server must provide a command-line entry point accepting the following arguments:
 
 Required CLI arguments:
 - `--stream-url STR` : URL of the internet radio stream (Icecast/Shoutcast). Mutually exclusive with `--config`.
@@ -98,7 +98,6 @@ The simplest way to use the server is with a single stream URL, name, and MIME t
 The server must auto-detect the local network IP address for use in the SSDP LOCATION URL and ContentDirectory stream URLs.
 
 ### Details
-- Open a UDP socket to `8.8.8.8:80` (no data is sent; this is just to determine the correct local interface IP).
-- If that fails, fall back to `socket.gethostbyname(socket.gethostname())`.
-- The detected IP is logged at startup.
-- The IP should be the server's network-facing address (not 127.0.0.1).
+- The server must auto-detect its network-facing IP address (not 127.0.0.1).
+- The detection method must work correctly even when multiple network interfaces are present.
+- The detected IP must be logged at startup.

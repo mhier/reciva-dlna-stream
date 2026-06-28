@@ -59,11 +59,8 @@ This REQ-0.3 documents this process; it is itself not a feature to implement.
 The server must have an automated test suite covering all features. Tests must be integration-level where possible.
 
 ### Details
-- Test framework: `pytest` with `pytest-asyncio` (asyncio_mode = auto).
-- HTTP client: `aiohttp.ClientSession`.
-- UPnP client: `async_upnp_client` (AiohttpRequester + UpnpFactory + DmsDevice).
 - Each test gets a fresh server instance (new port, new device UDN, new buffer).
-- Fixtures should use the same `start_server()` function as production code (not mocks).
+- Test fixtures should use the same server startup path as production code (not mocks).
 - Every feature must have at least one test.
 - Tests must avoid timing-dependent behavior (use active queries like M-SEARCH instead of passive waiting for NOTIFY).
 - Tests should verify: HTTP status codes, headers, body content, byte-level correctness for range requests.
@@ -108,11 +105,11 @@ The server must log meaningful information for debugging operational issues.
 
 **Status: ✅ Implemented**
 
-The server must be fully asynchronous (asyncio) — no synchronous blocking I/O.
+The server must be fully asynchronous — no synchronous blocking I/O.
 
 ### Details
-- All I/O operations are async (HTTP requests, stream reads, buffer management).
-- Use `asyncio.Event` for signaling between producer (buffer reader) and consumers (HTTP response writers).
-- Use `asyncio.Lock` for shared state (buffer mutations).
-- Track all streaming tasks in a `set[asyncio.Task]` for lifecycle management.
-- Use `asyncio.sleep(0)` in tight loops to yield control to the event loop.
+- All I/O operations must be non-blocking (HTTP requests, stream reads, buffer management).
+- Producer-consumer signaling must not lose wake-up events (no missed notifications between checking state and waiting).
+- All shared mutable state must be properly synchronized to prevent data races.
+- All streaming tasks must be tracked and cancellable on shutdown.
+- Tight loops must not block the main execution context (they must yield periodically).

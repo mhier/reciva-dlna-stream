@@ -3,7 +3,7 @@
 | Requirement ID | Title | Status |
 |---|---|---|
 | REQ-3.1 | Fake Content-Length | ✅ Implemented |
-| REQ-3.2 | Persistent Ring Buffer | 🔄 Changed |
+| REQ-3.2 | Persistent Ring Buffer with Grace Period | ✅ Implemented |
 | REQ-3.3 | Range Request Handling | ✅ Implemented |
 | REQ-3.4 | Full Stream (Non-Range) Request | ✅ Implemented |
 | REQ-3.5 | Synthetic ID3v1.1 Footer (End-of-File) | ✅ Implemented |
@@ -34,12 +34,11 @@ The server must advertise a `Content-Length` header on all stream responses, eve
 A background task must read the remote Icecast/Shoutcast stream into an in-memory ring buffer. The buffer must persist for a configurable grace period after all clients disconnect, maintaining its accumulated data so that reconnecting clients get consistent data. This prevents the "re-buffering → disconnect" cycle seen when the buffer stops immediately after each range request completes.
 
 ### Details
-- The buffer is a `bytearray` (or similar mutable bytes container) protected by a lock.
-- A background `asyncio.Task` reads from the remote stream URL in chunks (64 KB).
-- Data is appended to the buffer as it arrives.
-- When the buffer exceeds **4 MB**, the oldest bytes are trimmed (ring buffer behavior).
-- The buffer tracks: total bytes ever read, current bytes in buffer.
-- Support `async read(offset, size, timeout=30s)` that returns data from the buffer corresponding to the requested byte position in the "virtual file".
+- The buffer must be a mutable byte container that supports appending new data and trimming from the front.
+- A background task must continuously read from the remote stream URL in chunks and append data to the buffer.
+- When the buffer exceeds **4 MB**, the oldest bytes must be trimmed (ring buffer behavior).
+- The buffer must track: total bytes ever read, current bytes in buffer.
+- Support reading from the buffer by byte offset with a configurable timeout (default: 30 s), returning data corresponding to the requested byte position in the "virtual file".
 
 ### Grace Period (Keep-Alive Timeout)
 - **When the last client disconnects**, the buffer must NOT stop immediately.
@@ -47,9 +46,9 @@ A background task must read the remote Icecast/Shoutcast stream into an in-memor
   - The buffer continues running (remote stream keeps reading, data keeps accumulating in the ring buffer).
   - If a new client connects during the grace period, the buffer continues uninterrupted (grace period is cancelled).
   - If no client connects before the grace period expires, the buffer is stopped and all remote connection resources are freed.
-- Buffer lifecycle is managed by the `StreamForwarder` based on `_active_connections` count and a new `_disconnect_timer`:
-  - When count goes from 0→1 (or any client is active): cancel any pending disconnect timer.
-  - When count goes from 1→0 (last client disconnects): start the disconnect timer with the grace period timeout.
+- Buffer lifecycle must be governed by active connection count transitions:
+  - When the first client connects: ensure the buffer is active and cancel any pending disconnect timer.
+  - When the last client disconnects: start a timer with the grace period duration.
   - When the timer fires: stop the buffer.
 - This ensures:
   - No gap in stream data when the client reconnects quickly (e.g. sequential range requests or re-buffering).
@@ -60,11 +59,11 @@ A background task must read the remote Icecast/Shoutcast stream into an in-memor
 
 When a reader requests bytes at `offset` with a given `size`:
 
-1. Calculate where this offset falls in the ring buffer: `local_offset = len(buffer) - (total_read - offset)`.
-2. If `local_offset >= 0` and enough data is available: return the data immediately.
-3. If `local_offset >= 0` but only partial data available: return what's available.
-4. If `local_offset < 0`: the requested offset was trimmed from the buffer — raise an error.
-5. Otherwise (offset beyond what has been read so far): wait on an `asyncio.Event` for the buffer to advance, retry until timeout.
+1. Determine whether the requested offset falls within the retained portion of the ring buffer.
+2. If it does and enough data is available: return the data immediately.
+3. If it does but only partial data is available: return what is available.
+4. If the offset was trimmed from the buffer (too old): raise an error.
+5. If the offset is beyond what has been read so far: wait for the buffer to advance (with a timeout), then retry.
 
 ---
 
@@ -77,8 +76,8 @@ The server must handle HTTP Range requests (`Range: bytes=...`). Reciva radios r
 ### Details
 - The server must parse the `Range` header into `(start, end)` byte range.
 - Two types of range requests must be handled:
-  1. **Buffer ranges** (`range_end < FOOTER_START`): Serve data from the ring buffer at the requested offset.
-  2. **Footer ranges** (`range_end >= FOOTER_START`): Serve synthetic data (the ID3v1.1 footer) — no buffer I/O needed.
+1. **Buffer ranges** (requests that lie entirely within the real stream data): Serve data from the ring buffer at the requested offset.
+2. **Footer ranges** (requests that overlap or lie within the synthetic footer region): Serve synthetic data (the ID3v1.1 footer) — no buffer I/O needed.
 - All range responses must be `206 Partial Content` with a valid `Content-Range` header.
 - The `Content-Range` must be in the format: `bytes start-end/total` (where total is the fake Content-Length).
 
@@ -146,10 +145,10 @@ Every request for the same byte position N must return the exact same bytes, reg
 The server must track all active streaming connections (HTTP response tasks) for resource management and clean shutdown.
 
 ### Details
-- Each HTTP response that sends stream data must be tracked as an `asyncio.Task` in a set.
+- Each streaming response must be tracked as a cancellable unit of work.
 - The server must expose a count of active connections.
 - On shutdown, all active connections must be cancelled.
-- Tasks must be removed from the set in `finally` blocks (task done callback is insufficient if the set is iterated during shutdown).
+- Tracking must be cleaned up reliably when a streaming response ends (cleanup must not rely solely on async callbacks, which may not fire during iteration on shutdown).
 
 ---
 
@@ -160,8 +159,8 @@ The server must track all active streaming connections (HTTP response tasks) for
 If the connection to the remote internet radio stream is lost, the buffer background task must automatically reconnect and resume reading.
 
 ### Details
-- On remote stream end (server closed or stream ended): re-open the connection immediately and resume.
-- On remote stream error (DNS failure, connection refused, timeout): log the error, wait 5 seconds, retry.
+- On remote stream end (server closed or stream ended): reconnect and resume reading immediately.
+- On remote stream error (DNS failure, connection refused, timeout): log the error, wait before retrying.
 - The buffer must never crash or terminate permanently due to a remote stream failure.
 - All readers should continue to be served from whatever data remains in the buffer while the connection is down.
 
