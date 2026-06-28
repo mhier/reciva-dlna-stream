@@ -23,9 +23,9 @@ Requirements  ──(LLM derives)──→  Specifications  ──(LLM implement
 | [REQ-3: Stream Serving](REQ-3-stream-serving.md) | Fake Content-Length, ring buffer, range requests, synthetic footer, data consistency | 9 |
 | [REQ-4: Server Lifecycle & Configuration](REQ-4-lifecycle.md) | Startup order, CLI, port assignment, shutdown, single-stream, IP detection | 6 |
 | [REQ-5: Multi-Stream Support](REQ-5-multi-stream.md) | JSON config, indexed routes, independent buffers | 6 |
-| [REQ-6: Systemd Service Deployment](REQ-6-deployment.md) | Systemd unit, EnvironmentFile, restart policy, journald, install script, auto-start | 10 |
+| [REQ-6: Systemd Service Deployment](REQ-6-deployment.md) | Systemd unit, EnvironmentFile, restart policy, journald, install script, auto-start | 12 |
 
-**Total: 51 requirements**
+**Total: 53 requirements** (51 feature + 2 process-related ❌ Not applicable)
 
 ## Status Legend
 
