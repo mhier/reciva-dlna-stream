@@ -8,7 +8,8 @@
 #   3. Copies the systemd unit file and environment file
 #   4. Sets up the default config (from example-config.json)
 #   5. Fixes ownership of all installed files
-#   6. Enables the systemd service (but does NOT start it)
+#   6. Enables the systemd service
+#   7. (Re)starts the service so it is active immediately
 #
 # The script is idempotent — re-running it is safe and will only
 # create or fix what is missing or incorrect.
@@ -122,7 +123,18 @@ systemctl enable "$SERVICE_NAME"
 echo "[*] Service ${SERVICE_NAME} enabled."
 
 # ---------------------------------------------------------------------------
-# 8. Fix ownership of installed files (idempotent)
+# 8. (Re)start the service
+# ---------------------------------------------------------------------------
+if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+    systemctl restart "$SERVICE_NAME"
+    echo "[*] Service ${SERVICE_NAME} restarted."
+else
+    systemctl start "$SERVICE_NAME"
+    echo "[*] Service ${SERVICE_NAME} started."
+fi
+
+# ---------------------------------------------------------------------------
+# 9. Fix ownership of installed files (idempotent)
 # ---------------------------------------------------------------------------
 chown -R "${SERVICE_USER}:${SERVICE_GROUP}" "$(dirname "$VENV_DIR")"
 chown -R "${SERVICE_USER}:${SERVICE_GROUP}" "$CONFIG_DIR"
@@ -140,6 +152,6 @@ echo "[*] Installation complete!"
 echo ""
 echo "    Next steps:"
 echo "      1. Edit config:  sudo vi ${CONFIG_FILE}"
-echo "      2. Start:        sudo systemctl start ${SERVICE_NAME}"
-echo "      3. Status:       sudo systemctl status ${SERVICE_NAME}"
+echo "      2. Status:       sudo systemctl status ${SERVICE_NAME}"
+echo "      3. After config change:  sudo systemctl restart ${SERVICE_NAME}"
 echo "      4. Logs:         journalctl -u ${SERVICE_NAME} -f"
