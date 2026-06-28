@@ -115,7 +115,7 @@ async def async_main(args: argparse.Namespace) -> None:
     # Build server device class with a unique UDN and custom name
     # Use the first stream's name as the device friendly name
     device_name = streams[0].name if len(streams) == 1 else "reciva-dlna-stream"
-    device_class = _make_device_class(device_name, forwarders)
+    device_class = make_device_class(device_name, forwarders)
 
     http_port = args.port or 0
 
