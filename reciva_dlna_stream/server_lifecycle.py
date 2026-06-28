@@ -115,8 +115,17 @@ class ServerHandle:
         )
 
     async def stop(self) -> None:
-        """Stop all stream buffers, SSDP, then HTTP."""
+        """Stop all stream buffers, SSDP, then HTTP.
+
+        Shutdown sequence:
+        1. Cancel all active streaming connections (for each forwarder)
+        2. Stop all stream buffers (for each forwarder)
+        3. Stop advertisement announcer (stop sending NOTIFY)
+        4. Stop search responder (stop responding to M-SEARCH)
+        5. Cleanup aiohttp AppRunner
+        """
         for fwd in self._forwarders:
+            await fwd.cancel_all()
             await fwd.stop_buffer()
         await self._advertisement_announcer.async_stop()
         await self._search_responder.async_stop()

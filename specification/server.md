@@ -182,13 +182,11 @@ def make_device_class(
 
 ## Implementation Status
 
-**Status: CHANGED** — Specification recommends extracting the device class factory
-from `__main__.py` into `server.py` so both production and tests import from the
-same module. This has not yet been done in code.
+**Status: Implemented** — All described features are implemented in code.
 
 | Aspect | Status |
 |--------|--------|
 | Device definition, services, routes | Implemented |
 | ContentDirectory Browse, Search, Get* actions | Implemented |
 | ConnectionManager GetProtocolInfo, GetCurrentConnection* | Implemented |
-| `make_device_class()` factory shared between production and tests | **Spec changed, code not updated** |
+| `make_device_class()` factory shared between production and tests | ✅ Implemented |

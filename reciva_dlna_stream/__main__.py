@@ -14,10 +14,9 @@ import socket
 import sys
 from functools import partial
 from typing import cast
-from uuid import uuid4
 
 from .forwarder import StreamForwarder
-from .server import MediaServerDevice
+from .server import MediaServerDevice, make_device_class
 from .server_lifecycle import ServerHandle, start_server
 from .stream_config import ServerConfig, StreamConfig, load_config
 
@@ -161,12 +160,12 @@ async def async_main(args: argparse.Namespace) -> None:
 
     await stop_event.wait()
 
-    # Cleanup: cancel active streaming tasks first, then stop buffers + SSDP
-    for fwd in forwarders:
-        await fwd.cancel_all()
+    # Cleanup: stop() handles cancel_all internally
     await stopper.stop()
 
 
+# ---------------------------------------------------------------------------
+# CLI entry point
 # ---------------------------------------------------------------------------
 # Local IP detection
 # ---------------------------------------------------------------------------
@@ -187,41 +186,6 @@ def _get_local_ip() -> str | None:
     except OSError:
         return None
 
-
-# ---------------------------------------------------------------------------
-# Device class factory
-# ---------------------------------------------------------------------------
-
-
-def _make_device_class(friendly_name: str, forwarders: list[StreamForwarder]) -> type:
-    """Create a MediaServerDevice subclass with a unique UDN and custom name."""
-    udn = f"uuid:{uuid4()}"
-
-    class CustomMediaServerDevice(MediaServerDevice):
-        """MediaServer with custom UDN and name."""
-
-        DEVICE_DEFINITION = MediaServerDevice.DEVICE_DEFINITION._replace(
-            udn=udn,
-            friendly_name=friendly_name,
-        )
-
-        def __init__(
-            self,
-            requester: object,
-            base_uri: str,
-            boot_id: int = 1,
-            config_id: int = 1,
-        ) -> None:
-            """Initialize and set forwarders."""
-            super().__init__(
-                requester=requester,
-                base_uri=base_uri,
-                boot_id=boot_id,
-                config_id=config_id,
-            )
-            self.set_forwarders(forwarders)
-
-    return CustomMediaServerDevice
 
 
 # ---------------------------------------------------------------------------

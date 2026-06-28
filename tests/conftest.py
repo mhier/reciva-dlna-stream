@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import asyncio
 from typing import AsyncIterator
-from uuid import uuid4
 
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer, unused_port
 
 from reciva_dlna_stream.forwarder import StreamForwarder
+from reciva_dlna_stream.server import make_device_class as _make_device_class
 from reciva_dlna_stream.server import MediaServerDevice
 from reciva_dlna_stream.server_lifecycle import ServerHandle, start_server
 from reciva_dlna_stream.stream_config import StreamConfig
@@ -170,37 +170,14 @@ def make_device_class(
 ) -> type:
     """Create a MediaServerDevice subclass with the given forwarders and UDN.
 
-    Eliminates code duplication between test fixtures and ``__main__.py``.
-    Can also be used directly in tests that need a custom device class.
+    Delegates to ``server.make_device_class()`` which is now the canonical
+    implementation shared between production and tests.
     """
-    if udn is None:
-        udn = f"uuid:{uuid4()}"
-
-    class _CustomDevice(MediaServerDevice):
-        """MediaServerDevice with pre-wired forwarders."""
-
-        DEVICE_DEFINITION = MediaServerDevice.DEVICE_DEFINITION._replace(
-            udn=udn,
-            friendly_name=friendly_name,
-        )
-
-        def __init__(
-            self,
-            requester: object,
-            base_uri: str,
-            boot_id: int = 1,
-            config_id: int = 1,
-        ) -> None:
-            """Initialize and attach the forwarders."""
-            super().__init__(
-                requester=requester,
-                base_uri=base_uri,
-                boot_id=boot_id,
-                config_id=config_id,
-            )
-            self.set_forwarders(forwarders)
-
-    return _CustomDevice
+    return _make_device_class(
+        friendly_name=friendly_name,
+        forwarders=forwarders,
+        udn=udn,
+    )
 
 
 @pytest.fixture()

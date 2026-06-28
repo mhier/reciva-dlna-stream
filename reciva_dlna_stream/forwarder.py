@@ -26,6 +26,8 @@ _READ_TIMEOUT = 10
 _MAX_BUFFER_SIZE = 4 * 1024 * 1024
 # Delay between reconnection attempts when the remote stream fails
 _RECONNECT_DELAY = 5
+# Yield to event loop every N chunks (reduces overhead vs yielding every chunk)
+_YIELD_EVERY = 8
 # Grace period after last client disconnects before stopping the buffer (seconds)
 _DISCONNECT_TIMEOUT = 10
 
@@ -96,8 +98,7 @@ class StreamBuffer:
         self._buffer = bytearray()
         self._total_read: int = 0
         self._task: asyncio.Task[None] | None = None
-        self._lock = asyncio.Lock()
-        self._condition = asyncio.Condition(self._lock)
+        self._condition = asyncio.Condition()
         self._stopped = False
         # Created in _run(), closed in _close_session()
         self._connector: aiohttp.TCPConnector | None = None
@@ -194,6 +195,7 @@ class StreamBuffer:
                             "Buffer: remote stream connected: status=%d",
                             remote_resp.status,
                         )
+                        _chunks_since_yield = 0
                         async for chunk in remote_resp.content.iter_chunked(
                             _BUFFER_SIZE
                         ):
@@ -202,7 +204,7 @@ class StreamBuffer:
                             if not chunk:
                                 continue
 
-                            async with self._lock:
+                            async with self._condition:
                                 self._buffer.extend(chunk)
                                 self._total_read += len(chunk)
 
@@ -214,10 +216,12 @@ class StreamBuffer:
                                         "Buffer: trimmed %d bytes", excess
                                     )
 
-                            async with self._condition:
                                 self._condition.notify_all()
 
-                            await asyncio.sleep(0)
+                            _chunks_since_yield += 1
+                            if _chunks_since_yield >= _YIELD_EVERY:
+                                await asyncio.sleep(0)
+                                _chunks_since_yield = 0
 
                         # Remote stream ended cleanly (not an error, just retry)
                         _LOGGER.info(
@@ -307,9 +311,9 @@ class StreamBuffer:
                     pass
 
     @property
-    def lock(self) -> asyncio.Lock:
-        """The lock protecting buffer mutations (for test use)."""
-        return self._lock
+    def condition(self) -> asyncio.Condition:
+        """The condition protecting buffer mutations (for test use)."""
+        return self._condition
 
     async def inject_data(self, data: bytes) -> None:
         """Inject data directly into the buffer (for test use).
@@ -449,41 +453,41 @@ class StreamForwarder:
             request.remote,
         )
 
+        range_header = request.headers.get("Range")
+        range_spec = None
+        if range_header:
+            range_spec = self._parse_range(range_header)
+            if range_spec is not None:
+                range_start, range_end = range_spec
+                footer_start = _FAKE_CONTENT_LENGTH - _FOOTER_LENGTH
+                if range_end >= footer_start:
+                    # Footer early-return optimization: serve synthetic footer
+                    # without tracking the connection or starting the buffer.
+                    _LOGGER.info(
+                        "Footer early-return: bytes=%d-%d",
+                        range_start,
+                        range_end,
+                    )
+                    return await self._handle_footer_range(
+                        request, range_start, range_end
+                    )
+
         # Track this connection before any response to ensure proper
         # lifecycle management
         task = asyncio.current_task()
         assert task is not None
         self._active_connections.add(task)
 
-        # Ensure buffer is running for all requests (including footer probes)
-        await self._ensure_buffer_running()
-
-        range_header = request.headers.get("Range")
-        if range_header:
-            range_spec = self._parse_range(range_header)
-            if range_spec is not None:
-                range_start, range_end = range_spec
-                _LOGGER.info(
-                    "Range: bytes=%d-%d (file size=%d)",
-                    range_start,
-                    range_end,
-                    _FAKE_CONTENT_LENGTH,
-                )
-                footer_start = _FAKE_CONTENT_LENGTH - _FOOTER_LENGTH
-                if range_end >= footer_start:
-                    try:
-                        return await self._handle_footer_range(
-                            request, range_start, range_end
-                        )
-                    finally:
-                        self._active_connections.discard(task)
-                        await self._maybe_stop_buffer()
+        # Cancel any pending disconnect timer (grace period)
+        await self._cancel_disconnect_timer()
 
         # Buffer data needed — ensure buffer is running
-        await self._ensure_buffer_running()
+        if not self._buffer.is_running:
+            _LOGGER.info("Starting buffer on first client connection")
+            await self._buffer.start()
 
         try:
-            if range_header and range_spec is not None:
+            if range_spec is not None:
                 range_start, range_end = range_spec
                 return await self._handle_buffer_range(
                     request, range_start, range_end
@@ -755,6 +759,8 @@ class StreamForwarder:
 
         await response.prepare(request)
 
+        # Always defined in try so finally can reference it
+        bytes_sent = 0
         try:
             bytes_sent = await self._write_chunks_to_response(
                 response=response,
@@ -767,7 +773,7 @@ class StreamForwarder:
         finally:
             _LOGGER.info(
                 "=== Client disconnected (sent %d bytes) ===",
-                bytes_sent if 'bytes_sent' in dir() else 0,
+                bytes_sent,
             )
 
         return response

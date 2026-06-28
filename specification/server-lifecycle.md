@@ -141,12 +141,11 @@ Network overhead: ~500 bytes × 5 entries / 5s = ~500 bytes/sec — negligible.
 
 ## Implementation Status
 
-**Status: CHANGED** — `ServerHandle.stop()` now includes `cancel_all()` as the
-first shutdown step. This has not yet been reflected in code.
+**Status: Implemented** — All described features are implemented in code.
 
 | Aspect | Status |
 |--------|--------|
 | Port auto-assignment fix (temp socket) | Implemented |
 | FastSsdpAdvertisementAnnouncer (all entries per beacon) | Implemented |
 | Server startup sequence (port → device → HTTP → SSDP) | Implemented |
-| `ServerHandle.stop()` self-contained shutdown (cancel_all internal) | **Spec changed, code not updated** |
+| `ServerHandle.stop()` self-contained shutdown (cancel_all internal) | ✅ Implemented |

@@ -247,13 +247,12 @@ Each streaming task is tracked in `_active_connections: set[asyncio.Task]`. This
 
 ## Implementation Status
 
-**Status: CHANGED** — Specification has been updated with multiple refinements
-that are not yet reflected in the code.
+**Status: Implemented** — All described features are implemented in code.
 
 | Change | Status |
 |--------|--------|
-| `StreamBuffer` uses `asyncio.Condition` as sole lock (no separate `Lock`) | **Spec changed, code not updated** |
-| Writer yields via `asyncio.sleep(0)` periodically (every N chunks) instead of every chunk | **Spec changed, code not updated** |
-| Footer-range check before buffer lifecycle (footer early-return optimization) | **Spec changed, code not updated** |
-| `bytes_sent` in `_handle_full_stream` uses direct variable reference (no `dir()` introspection) | **Spec changed, code not updated** |
-| All other behavior (ring buffer, synthetic footer, grace period, connection tracking) | Implemented |
+| `StreamBuffer` uses `asyncio.Condition` as sole lock (no separate `Lock`) | ✅ Implemented |
+| Writer yields via `asyncio.sleep(0)` periodically (every N chunks) instead of every chunk | ✅ Implemented |
+| Footer-range check before buffer lifecycle (footer early-return optimization) | ✅ Implemented |
+| `bytes_sent` in `_handle_full_stream` uses direct variable reference (no `dir()` introspection) | ✅ Implemented |
+| Ring buffer, synthetic footer, grace period, connection tracking | Implemented |

@@ -698,3 +698,55 @@ class MediaServerDevice(UpnpServerDevice):
                 # Collect all MIME types for multi-stream support
                 mime_types = [s.mime_type for s in streams] if streams else ["audio/mpeg"]
                 service.configure(mime_types=mime_types)
+
+
+# ---------------------------------------------------------------------------
+# Device class factory (shared between production and tests)
+# ---------------------------------------------------------------------------
+
+
+def make_device_class(
+    friendly_name: str,
+    forwarders: list[StreamForwarder],
+    udn: str | None = None,
+) -> type:
+    """Create a MediaServerDevice subclass with a unique UDN and custom name.
+
+    Args:
+        friendly_name: The device's friendly name.
+        forwarders: List of StreamForwarder instances.
+        udn: Optional UDN string (e.g. "uuid:..."). Auto-generated if None.
+
+    Returns:
+        A MediaServerDevice subclass with the given UDN and forwarders pre-wired.
+    """
+    from uuid import uuid4
+
+    if udn is None:
+        udn = f"uuid:{uuid4()}"
+
+    class _CustomDevice(MediaServerDevice):
+        """MediaServerDevice with custom UDN and pre-wired forwarders."""
+
+        DEVICE_DEFINITION = MediaServerDevice.DEVICE_DEFINITION._replace(
+            udn=udn,
+            friendly_name=friendly_name,
+        )
+
+        def __init__(
+            self,
+            requester: object,
+            base_uri: str,
+            boot_id: int = 1,
+            config_id: int = 1,
+        ) -> None:
+            """Initialize and attach the forwarders."""
+            super().__init__(
+                requester=requester,
+                base_uri=base_uri,
+                boot_id=boot_id,
+                config_id=config_id,
+            )
+            self.set_forwarders(forwarders)
+
+    return _CustomDevice

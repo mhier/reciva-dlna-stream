@@ -840,7 +840,7 @@ async def test_buffer_trim_error_returns_416(
     chunk_size = 64 * 1024  # Match _BUFFER_SIZE
     target_size = _MAX_BUFFER_SIZE + chunk_size
 
-    async with buffer.lock:
+    async with buffer.condition:
         while len(buffer._buffer) < target_size:
             buffer._buffer.extend(b"\x00" * chunk_size)
             buffer._total_read += chunk_size
