@@ -196,8 +196,8 @@ async def start_server(
             partial(unsubscribe_handler, service),
         )
 
-    if device.ROUTES:
-        app.router.add_routes(device.ROUTES)
+    if device.routes:
+        app.router.add_routes(device.routes)
 
     # ------------------------------------------------------------------
     # Step 3: Start the real HTTP server on the known port

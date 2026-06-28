@@ -16,6 +16,7 @@ import logging
 import pytest
 
 from aiohttp import ClientSession
+from aiohttp.test_utils import TestServer
 from async_upnp_client.aiohttp import AiohttpRequester
 from async_upnp_client.client_factory import UpnpFactory
 from async_upnp_client.profiles.dlna import DmsDevice
@@ -250,15 +251,18 @@ async def test_range_request(
 @pytest.mark.asyncio
 async def test_end_of_file_range_request(
     dlna_base_uri: str,
+    stream_forwarder: StreamForwarder,
 ) -> None:
     """
     Test that a Range request targeting the end of the fake file
     returns synthetic ID3v1 tag data (last 129 bytes).
     """
-    from reciva_dlna_stream.forwarder import _FAKE_CONTENT_LENGTH, _SYNTHETIC_FOOTER
+    from reciva_dlna_stream.forwarder import _FAKE_CONTENT_LENGTH, _build_synthetic_footer
+
+    synthetic_footer = _build_synthetic_footer()
 
     # The last 129 bytes of the fake file
-    range_start = _FAKE_CONTENT_LENGTH - len(_SYNTHETIC_FOOTER)
+    range_start = _FAKE_CONTENT_LENGTH - len(synthetic_footer)
     range_end = _FAKE_CONTENT_LENGTH - 1
 
     async with ClientSession() as session:
@@ -274,11 +278,11 @@ async def test_end_of_file_range_request(
             assert resp.headers.get("Accept-Ranges") == "bytes"
             assert resp.headers.get("TransferMode.DLNA.ORG") == "Streaming"
 
-            data = await resp.content.readexactly(len(_SYNTHETIC_FOOTER))
-            assert len(data) == len(_SYNTHETIC_FOOTER), (
-                f"Expected {len(_SYNTHETIC_FOOTER)} bytes, got {len(data)}"
+            data = await resp.content.readexactly(len(synthetic_footer))
+            assert len(data) == len(synthetic_footer), (
+                f"Expected {len(synthetic_footer)} bytes, got {len(data)}"
             )
-            assert data == _SYNTHETIC_FOOTER, (
+            assert data == synthetic_footer, (
                 "Synthetic footer data mismatch"
             )
 
@@ -415,7 +419,7 @@ async def test_buffer_persists_across_sequential_connections(
             data1 = await resp.content.readexactly(range1_size)
 
     # Buffer should still be alive (grace period)
-    assert stream_forwarder._buffer.is_running, (
+    assert stream_forwarder.is_buffer_running, (
         "Buffer should still run during grace period"
     )
     assert stream_forwarder._buffer.total_bytes_read > 0, (
@@ -630,12 +634,12 @@ async def test_connection_manager_multi_mime_distinct(
     """
     import xml.etree.ElementTree as ET
     from uuid import uuid4
-    from aiohttp.web import RouteDef
 
     from reciva_dlna_stream.forwarder import StreamForwarder
     from reciva_dlna_stream.server import MediaServerDevice
     from reciva_dlna_stream.server_lifecycle import start_server
     from reciva_dlna_stream.stream_config import StreamConfig
+    from tests.conftest import make_device_class
 
     # Create forwarders with different MIME types
     fwd_mpeg = StreamForwarder(stream_url=fake_radio_url, mime_type="audio/mpeg")
@@ -647,34 +651,13 @@ async def test_connection_manager_multi_mime_distinct(
     ]
     forwarders = [fwd_mpeg, fwd_ogg]
 
-    udn = f"uuid:{uuid4()}"
-
-    class DistinctMimeDevice(MediaServerDevice):
-        """A MediaServerDevice with two streams of different MIME types."""
-
-        DEVICE_DEFINITION = MediaServerDevice.DEVICE_DEFINITION._replace(
-            udn=udn,
-            friendly_name="Distinct MIME Test",
-        )
-
-        def __init__(
-            self,
-            requester: object,
-            base_uri: str,
-            boot_id: int = 1,
-            config_id: int = 1,
-        ) -> None:
-            """Initialize and attach forwarders."""
-            super().__init__(
-                requester=requester,
-                base_uri=base_uri,
-                boot_id=boot_id,
-                config_id=config_id,
-            )
-            self.set_forwarders(forwarders)
+    device_class = make_device_class(
+        forwarders=forwarders,
+        friendly_name="Distinct MIME Test",
+    )
 
     handle = await start_server(
-        device_class=DistinctMimeDevice,
+        device_class=device_class,
         local_ip="127.0.0.1",
         http_bind="127.0.0.1",
         http_port=dlna_http_port,
@@ -713,7 +696,7 @@ async def test_connection_manager_multi_mime_distinct(
                 assert (
                     "http-get:*:audio/mpeg:*,http-get:*:audio/ogg:*" in text
                     or "http-get:*:audio/ogg:*,http-get:*:audio/mpeg:*" in text
-                )
+    )
     finally:
         await fwd_mpeg.cancel_all()
         await fwd_ogg.cancel_all()
@@ -857,7 +840,7 @@ async def test_buffer_trim_error_returns_416(
     chunk_size = 64 * 1024  # Match _BUFFER_SIZE
     target_size = _MAX_BUFFER_SIZE + chunk_size
 
-    async with buffer._lock:
+    async with buffer.lock:
         while len(buffer._buffer) < target_size:
             buffer._buffer.extend(b"\x00" * chunk_size)
             buffer._total_read += chunk_size
@@ -1050,9 +1033,11 @@ async def test_multi_stream_end_of_file(
     """
     Test that synthetic footer is served for multi-stream routes.
     """
-    from reciva_dlna_stream.forwarder import _FAKE_CONTENT_LENGTH, _SYNTHETIC_FOOTER
+    from reciva_dlna_stream.forwarder import _FAKE_CONTENT_LENGTH, _build_synthetic_footer
 
-    range_start = _FAKE_CONTENT_LENGTH - len(_SYNTHETIC_FOOTER)
+    synthetic_footer = _build_synthetic_footer()
+
+    range_start = _FAKE_CONTENT_LENGTH - len(synthetic_footer)
     range_end = _FAKE_CONTENT_LENGTH - 1
 
     async with ClientSession() as session:
@@ -1062,8 +1047,8 @@ async def test_multi_stream_end_of_file(
             timeout=STREAM_READ_TIMEOUT,
         ) as resp:
             assert resp.status == 206
-            data = await resp.content.readexactly(len(_SYNTHETIC_FOOTER))
-            assert data == _SYNTHETIC_FOOTER
+            data = await resp.content.readexactly(len(synthetic_footer))
+            assert data == synthetic_footer
 
     async with ClientSession() as session:
         async with session.get(
@@ -1072,8 +1057,8 @@ async def test_multi_stream_end_of_file(
             timeout=STREAM_READ_TIMEOUT,
         ) as resp:
             assert resp.status == 206
-            data = await resp.content.readexactly(len(_SYNTHETIC_FOOTER))
-            assert data == _SYNTHETIC_FOOTER
+            data = await resp.content.readexactly(len(synthetic_footer))
+            assert data == synthetic_footer
 
 
 @pytest.mark.asyncio
@@ -1170,3 +1155,106 @@ async def test_cancel_all_cleans_up_connections(
         # Clean up client-side responses
         for resp in conns:
             resp.close()
+
+
+# ---------------------------------------------------------------------------
+# Buffer auto-reconnect tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_buffer_reconnects_after_stream_end(
+    fake_radio_server_flakey: TestServer,
+) -> None:
+    """
+    Verify that the buffer reconnects to the remote stream after it ends.
+
+    The flakey radio server only serves 8 KB per connection. The buffer
+    should detect the stream end, reconnect after ``_RECONNECT_DELAY``,
+    and continue accumulating data.
+    """
+    from reciva_dlna_stream.forwarder import StreamBuffer, _RECONNECT_DELAY
+
+    url = f"http://127.0.0.1:{fake_radio_server_flakey.port}/radio/flakey"
+    buffer = StreamBuffer(url)
+
+    await buffer.start()
+
+    try:
+        # Wait for the buffer to fetch data from the first connection
+        await asyncio.sleep(0.5)
+
+        # The buffer should have read data from the first connection
+        total_before = buffer.total_bytes_read
+        assert total_before > 0, (
+            f"Expected buffer to have read some data, got {total_before}"
+        )
+
+        # Wait for reconnect delay + buffer to fetch data from second connection
+        await asyncio.sleep(_RECONNECT_DELAY + 1.0)
+
+        # The buffer should have read more data from the reconnection
+        total_after = buffer.total_bytes_read
+        assert total_after > total_before, (
+            f"Expected buffer to read more data after reconnect "
+            f"(before={total_before}, after={total_after})"
+        )
+    finally:
+        await buffer.stop()
+
+
+@pytest.mark.asyncio
+async def test_buffer_read_timeout_returns_empty() -> None:
+    """
+    Verify that StreamBuffer.read() returns empty bytes on timeout.
+
+    When the buffer has no data at the requested offset and the timeout
+    expires, read() should return b"" rather than blocking indefinitely.
+    """
+    from reciva_dlna_stream.forwarder import StreamBuffer
+
+    # Create a buffer but never start it — no data will ever arrive.
+    buffer = StreamBuffer(stream_url="http://127.0.0.1:1/nonexistent")
+
+    # Read with a very short timeout — should return empty bytes.
+    result = await buffer.read(offset=0, size=1024, timeout=0.1)
+
+    assert result == b"", (
+        f"Expected empty bytes on read timeout, got {len(result)} bytes"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Session cleanup after cancelled _run()
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_session_closed_after_cancelled_run() -> None:
+    """
+    Verify that StreamBuffer._close_session() is called when _run() is
+    cancelled (via stop()), not just on clean stop.
+    """
+    from reciva_dlna_stream.forwarder import StreamBuffer
+
+    buffer = StreamBuffer(stream_url="http://127.0.0.1:1/nonexistent")
+    await buffer.start()
+
+    # Give _run() a moment to create the session and connector
+    await asyncio.sleep(0.1)
+
+    # Verify session and connector were created
+    assert buffer._session is not None, "Session should be created in _run()"
+    assert buffer._connector is not None, "Connector should be created in _run()"
+
+    # Stop the buffer — this cancels _run() which should trigger _close_session()
+    await buffer.stop()
+
+    # Verify session and connector are None after cleanup
+    assert buffer._session is None, (
+        "Session should be None after stopped/cancelled _run()"
+    )
+    assert buffer._connector is None, (
+        "Connector should be None after stopped/cancelled _run()"
+    )
+

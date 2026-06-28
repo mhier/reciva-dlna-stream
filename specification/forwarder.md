@@ -63,6 +63,11 @@ Logic:
 3. If `local_offset >= 0` but partial → return what's available
 4. If `local_offset < 0`: offset has been trimmed from the buffer → raise `ValueError`
 5. Otherwise: wait on `asyncio.Event` for more data, retry until timeout
+   - Uses `asyncio.wait_for(event.wait(), timeout=...)` with a dynamic timeout
+   - Catches `TimeoutError`/`asyncio.TimeoutError` from `wait_for` and falls through
+     to the deadline check at step 6 (Python 3.12 raises `TimeoutError` rather
+     than `asyncio.TimeoutError`)
+6. If deadline exceeded: log warning, return `b""`
 
 ## Class: `StreamForwarder`
 

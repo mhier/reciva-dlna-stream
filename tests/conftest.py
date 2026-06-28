@@ -57,10 +57,14 @@ def dlna_http_port() -> int:
 
 @pytest.fixture()
 async def fake_radio_server(dummy_mp3_data: bytes) -> AsyncIterator[TestServer]:
-    """Start a tiny HTTP server that serves the dummy MP3 data."""
+    """Start a tiny HTTP server that serves dummy MP3 data continuously.
+
+    The server loops the dummy data indefinitely, so tests can read
+    more than 16 KB without the connection closing.
+    """
 
     async def handle_stream(request: web.Request) -> web.StreamResponse:
-        """Serve the dummy MP3 as a streaming response."""
+        """Serve the dummy MP3 as an infinite streaming response."""
         response = web.StreamResponse(
             status=200,
             headers={
@@ -71,17 +75,68 @@ async def fake_radio_server(dummy_mp3_data: bytes) -> AsyncIterator[TestServer]:
         await response.prepare(request)
 
         chunk_size = 4096
-        offset = 0
-        while offset < len(dummy_mp3_data):
-            chunk = dummy_mp3_data[offset : offset + chunk_size]
-            await response.write(chunk)
-            offset += chunk_size
-            await asyncio.sleep(0.001)
+        while True:
+            for offset in range(0, len(dummy_mp3_data), chunk_size):
+                chunk = dummy_mp3_data[offset : offset + chunk_size]
+                try:
+                    await response.write(chunk)
+                except (ConnectionResetError, ConnectionAbortedError):
+                    return response
+                await asyncio.sleep(0.001)
 
         return response
 
     app = web.Application()
     app.router.add_get("/radio", handle_stream)
+
+    server = TestServer(app)
+    await server.start_server()
+    try:
+        yield server
+    finally:
+        await server.close()
+
+
+@pytest.fixture()
+async def fake_radio_server_flakey(dummy_mp3_data: bytes) -> AsyncIterator[TestServer]:
+    """Start a fake radio server that fails after serving a limited amount of data.
+
+    This simulates a remote stream that drops unexpectedly, allowing tests
+    to exercise the buffer's auto-reconnect logic.
+
+    The handler serves up to 8 KB of data on each connection attempt and
+    then returns (client sees stream end). This triggers an EOF from the
+    server's perspective, which causes the buffer's ``_run()`` loop to
+    reattempt the connection.
+    """
+
+    async def handle_stream(request: web.Request) -> web.StreamResponse:
+        """Serve a limited amount of data then end the stream."""
+        response = web.StreamResponse(
+            status=200,
+            headers={
+                "Content-Type": DUMMY_MIME,
+                "Cache-Control": "no-cache",
+            },
+        )
+        await response.prepare(request)
+
+        # Serve only a small amount of data then end cleanly
+        served = 0
+        chunk_size = 4096
+        while served < 8192:
+            chunk = dummy_mp3_data[served : served + chunk_size]
+            try:
+                await response.write(chunk)
+            except (ConnectionResetError, ConnectionAbortedError):
+                break
+            served += len(chunk)
+            await asyncio.sleep(0.001)
+
+        return response
+
+    app = web.Application()
+    app.router.add_get("/radio/flakey", handle_stream)
 
     server = TestServer(app)
     await server.start_server()
@@ -103,21 +158,30 @@ def stream_forwarder(fake_radio_url: str) -> StreamForwarder:
     return StreamForwarder(stream_url=fake_radio_url, mime_type=DUMMY_MIME)
 
 
-@pytest.fixture()
-def dlna_device_class(stream_forwarder: StreamForwarder) -> type:
-    """
-    Create a MediaServerDevice subclass that sets up the forwarders
-    on construction.
-    """
-    forwarders = [stream_forwarder]
-    udn = f"uuid:{uuid4()}"
+# ---------------------------------------------------------------------------
+# Shared device class factory
+# ---------------------------------------------------------------------------
 
-    class TestMediaServerDevice(MediaServerDevice):
-        """A MediaServerDevice with a unique UDN and pre-wired forwarder."""
+
+def make_device_class(
+    forwarders: list[StreamForwarder],
+    friendly_name: str = DUMMY_STREAM_TITLE,
+    udn: str | None = None,
+) -> type:
+    """Create a MediaServerDevice subclass with the given forwarders and UDN.
+
+    Eliminates code duplication between test fixtures and ``__main__.py``.
+    Can also be used directly in tests that need a custom device class.
+    """
+    if udn is None:
+        udn = f"uuid:{uuid4()}"
+
+    class _CustomDevice(MediaServerDevice):
+        """MediaServerDevice with pre-wired forwarders."""
 
         DEVICE_DEFINITION = MediaServerDevice.DEVICE_DEFINITION._replace(
             udn=udn,
-            friendly_name=DUMMY_STREAM_TITLE,
+            friendly_name=friendly_name,
         )
 
         def __init__(
@@ -136,7 +200,19 @@ def dlna_device_class(stream_forwarder: StreamForwarder) -> type:
             )
             self.set_forwarders(forwarders)
 
-    return TestMediaServerDevice
+    return _CustomDevice
+
+
+@pytest.fixture()
+def dlna_device_class(stream_forwarder: StreamForwarder) -> type:
+    """
+    Create a MediaServerDevice subclass that sets up the forwarders
+    on construction.
+    """
+    return make_device_class(
+        forwarders=[stream_forwarder],
+        friendly_name=DUMMY_STREAM_TITLE,
+    )
 
 
 @pytest.fixture()
@@ -189,34 +265,10 @@ def dlna_device_class_multi(
     """
     Create a MediaServerDevice subclass with two forwarders for multi-stream tests.
     """
-    forwarders = [stream_forwarder, stream_forwarder_alt]
-    udn = f"uuid:{uuid4()}"
-
-    class TestMultiStreamDevice(MediaServerDevice):
-        """A MediaServerDevice with two streams."""
-
-        DEVICE_DEFINITION = MediaServerDevice.DEVICE_DEFINITION._replace(
-            udn=udn,
-            friendly_name="Multi-Stream Test",
-        )
-
-        def __init__(
-            self,
-            requester: object,
-            base_uri: str,
-            boot_id: int = 1,
-            config_id: int = 1,
-        ) -> None:
-            """Initialize and attach the forwarders."""
-            super().__init__(
-                requester=requester,
-                base_uri=base_uri,
-                boot_id=boot_id,
-                config_id=config_id,
-            )
-            self.set_forwarders(forwarders)
-
-    return TestMultiStreamDevice
+    return make_device_class(
+        forwarders=[stream_forwarder, stream_forwarder_alt],
+        friendly_name="Multi-Stream Test",
+    )
 
 
 @pytest.fixture()

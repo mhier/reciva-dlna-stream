@@ -89,7 +89,7 @@ reciva_dlna_stream/
 tests/
 ├── __init__.py
 ├── conftest.py          # Test fixtures (single + multi-stream)
-└── test_integration.py  # Integration tests (22 tests)
+└── test_integration.py  # Integration tests (30 tests)
 
 specification/
 ├── architecture.md      # This file

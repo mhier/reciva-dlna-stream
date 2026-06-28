@@ -55,28 +55,28 @@ _DLNA_TRANSFER_MODE = "Streaming"
 # with no real end, we serve a synthetic ID3v1.1 tag for any range that
 # intersects the last 128 bytes of our fake file size.
 # ---------------------------------------------------------------------------
-_CURRENT_YEAR = str(datetime.datetime.now().year).encode("ascii")
+_FOOTER_LENGTH = 129  # 1 ID3 frame separator byte + 128 byte ID3v1 tag
 
-_ID3V1_TAG = (
-    b"TAG"
-    + b"Internet Radio\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
-    + b"\x00" * 30  # Artist
-    + b"\x00" * 30  # Album
-    + _CURRENT_YEAR  # Year
-    + b"\x00" * 28  # Comment (null-padded)
-    + b"\x00"       # v1.1 separator
-    + b"\x01"       # Track 1
-    + b"\xff"       # Genre 255 (Unknown)
-)
 
-assert len(_ID3V1_TAG) == 128, f"ID3v1 tag must be 128 bytes, got {len(_ID3V1_TAG)}"
+def _build_synthetic_footer() -> bytes:
+    """Build the synthetic ID3v1.1 footer.
 
-_ID3_LAST_FRAME_BYTE = b"\x00"
-
-_SYNTHETIC_FOOTER = _ID3_LAST_FRAME_BYTE + _ID3V1_TAG
-_FOOTER_LENGTH = len(_SYNTHETIC_FOOTER)  # 129
-
-_FOOTER_START = _FAKE_CONTENT_LENGTH - _FOOTER_LENGTH
+    Constructed at call time so the year is always current.
+    """
+    year_bytes = str(datetime.datetime.now().year).encode("ascii")
+    id3v1_tag = (
+        b"TAG"
+        + b"Internet Radio\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+        + b"\x00" * 30  # Artist
+        + b"\x00" * 30  # Album
+        + year_bytes   # Year
+        + b"\x00" * 28  # Comment (null-padded)
+        + b"\x00"       # v1.1 separator
+        + b"\x01"       # Track 1
+        + b"\xff"       # Genre 255 (Unknown)
+    )
+    assert len(id3v1_tag) == 128, f"ID3v1 tag must be 128 bytes, got {len(id3v1_tag)}"
+    return b"\x00" + id3v1_tag
 
 
 class StreamBuffer:
@@ -279,12 +279,31 @@ class StreamBuffer:
                 )
                 return b""
 
-            await asyncio.wait_for(
-                self._event.wait(), timeout=max(0.1, deadline - asyncio.get_running_loop().time())
-            )
+            try:
+                await asyncio.wait_for(
+                    self._event.wait(), timeout=max(0.1, deadline - asyncio.get_running_loop().time())
+                )
+            except asyncio.TimeoutError:
+                pass
             # Clear the event so we don't spin — if new data arrives,
             # _run() will set() it again and wake us.
             self._event.clear()
+
+    @property
+    def lock(self) -> asyncio.Lock:
+        """The lock protecting buffer mutations (for test use)."""
+        return self._lock
+
+    async def inject_data(self, data: bytes) -> None:
+        """Inject data directly into the buffer (for test use).
+
+        This simulates what _run() does but without an actual remote
+        connection. Acquires the lock internally.
+        """
+        async with self._lock:
+            self._buffer.extend(data)
+            self._total_read += len(data)
+        self._event.set()
 
 
 class StreamForwarder:
@@ -305,6 +324,8 @@ class StreamForwarder:
 
         self._active_connections: set[asyncio.Task[None]] = set()
         self._disconnect_timer: asyncio.Task[None] | None = None
+        self._shutting_down = False
+        self._synthetic_footer = _build_synthetic_footer()
 
     @property
     def active_connection_count(self) -> int:
@@ -337,6 +358,16 @@ class StreamForwarder:
                 pass
             self._disconnect_timer = None
 
+    @property
+    def is_stopped(self) -> bool:
+        """Whether the underlying buffer has been stopped."""
+        return self._buffer.is_stopped
+
+    @property
+    def is_buffer_running(self) -> bool:
+        """Whether the underlying buffer task is running."""
+        return self._buffer.is_running
+
     async def _maybe_stop_buffer(self) -> None:
         """Start a disconnect timer if no clients remain.
 
@@ -346,7 +377,7 @@ class StreamForwarder:
         timer fires, the timer is cancelled. If the timer fires,
         the buffer is stopped.
         """
-        if self._active_connections or self._disconnect_timer is not None:
+        if self._active_connections or self._disconnect_timer is not None or self._shutting_down:
             return
         _LOGGER.info(
             "No active clients, starting disconnect timer (%ds)",
@@ -407,7 +438,9 @@ class StreamForwarder:
         assert task is not None
         self._active_connections.add(task)
 
-        # Footer ranges don't need the buffer — serve immediately
+        # Ensure buffer is running for all requests (including footer probes)
+        await self._ensure_buffer_running()
+
         range_header = request.headers.get("Range")
         if range_header:
             range_spec = self._parse_range(range_header)
@@ -419,7 +452,8 @@ class StreamForwarder:
                     range_end,
                     _FAKE_CONTENT_LENGTH,
                 )
-                if range_end >= _FOOTER_START:
+                footer_start = _FAKE_CONTENT_LENGTH - _FOOTER_LENGTH
+                if range_end >= footer_start:
                     try:
                         return await self._handle_footer_range(
                             request, range_start, range_end
@@ -472,10 +506,11 @@ class StreamForwarder:
             range_end,
         )
 
-        footer_offset_start = max(range_start - _FOOTER_START, 0)
-        footer_offset_end = min(range_end - _FOOTER_START + 1, _FOOTER_LENGTH)
+        footer_start = _FAKE_CONTENT_LENGTH - _FOOTER_LENGTH
+        footer_offset_start = max(range_start - footer_start, 0)
+        footer_offset_end = min(range_end - footer_start + 1, _FOOTER_LENGTH)
 
-        data = _SYNTHETIC_FOOTER[footer_offset_start:footer_offset_end]
+        data = self._synthetic_footer[footer_offset_start:footer_offset_end]
         content_length = len(data)
 
         resp_headers = {
@@ -501,6 +536,92 @@ class StreamForwarder:
             range_start + content_length - 1,
         )
         return response
+
+    # ------------------------------------------------------------------
+    # Shared chunk-write loop
+    # ------------------------------------------------------------------
+
+    async def _write_chunks_to_response(
+        self,
+        response: StreamResponse,
+        offset: int,
+        content_length: int | None,
+        range_start: int | None = None,
+    ) -> int:
+        """Read chunks from the buffer and write them to the response.
+
+        Args:
+            response: The aiohttp StreamResponse to write to.
+            offset: Starting byte offset in the buffer to read from.
+            content_length: Total bytes to send, or None for infinite stream.
+            range_start: For range requests, the original range start (for logging).
+
+        Returns:
+            Number of bytes actually sent.
+
+        For non-range (full stream) requests without a content_length,
+        the loop continues until the buffer is stopped.
+        """
+        bytes_sent = 0
+        try:
+            while content_length is None or bytes_sent < content_length:
+                if content_length is not None:
+                    chunk_size = min(content_length - bytes_sent, _BUFFER_SIZE)
+                else:
+                    chunk_size = _BUFFER_SIZE
+
+                chunk = await self._buffer.read(offset, chunk_size)
+                if not chunk:
+                    if content_length is not None:
+                        _LOGGER.warning(
+                            "Buffer returned empty data at offset %d, "
+                            "sent %d/%d bytes before timeout",
+                            offset, bytes_sent, content_length,
+                        )
+                    else:
+                        if self.is_stopped:
+                            break
+                        await asyncio.sleep(0)
+                        continue
+                    break
+
+                try:
+                    await response.write(chunk)
+                except (ConnectionResetError, ConnectionAbortedError) as exc:
+                    _LOGGER.warning(
+                        "Client disconnected during write: %s", exc
+                    )
+                    break
+
+                bytes_sent += len(chunk)
+                offset += len(chunk)
+
+                if content_length is not None:
+                    LOG_INTERVAL = 512 * 1024
+                    if bytes_sent < 2048 or (bytes_sent % LOG_INTERVAL) == 0:
+                        _LOGGER.debug(
+                            "Range: forwarded %d/%d bytes",
+                            bytes_sent, content_length,
+                        )
+                elif self._verbose_logging:
+                    LOG_INTERVAL = 512 * 1024
+                    if bytes_sent < 2048 or (bytes_sent % LOG_INTERVAL) == 0:
+                        _LOGGER.debug("Forwarded %d bytes so far", bytes_sent)
+
+                await asyncio.sleep(0)
+
+            if content_length is not None:
+                _LOGGER.info(
+                    "Range fulfilled: sent %d bytes",
+                    bytes_sent,
+                )
+        except asyncio.CancelledError:
+            _LOGGER.debug("Stream forwarding cancelled")
+            raise
+        except Exception:
+            _LOGGER.exception("Error writing chunks to response")
+
+        return bytes_sent
 
     # ------------------------------------------------------------------
     # Buffer range handling
@@ -570,43 +691,15 @@ class StreamForwarder:
                 return response
 
             bytes_sent = len(first_chunk)
-            offset = range_start + bytes_sent
             remaining = content_length - bytes_sent
 
-            # Read from the ring buffer in chunks
-            while remaining > 0:
-                chunk_size = min(remaining, _BUFFER_SIZE)
-                chunk = await self._buffer.read(offset, chunk_size)
-                if not chunk:
-                    _LOGGER.warning(
-                        "Buffer returned empty data at offset %d, "
-                        "sent %d/%d bytes before timeout",
-                        offset,
-                        bytes_sent,
-                        content_length,
-                    )
-                    break
-
-                try:
-                    await response.write(chunk)
-                except (ConnectionResetError, ConnectionAbortedError) as exc:
-                    _LOGGER.warning(
-                        "Client disconnected during write: %s", exc
-                    )
-                    break
-
-                bytes_sent += len(chunk)
-                offset += len(chunk)
-                remaining -= len(chunk)
-
-                # Log every chunk until 2 KB sent, then every 512 KB thereafter
-                LOG_INTERVAL = 512 * 1024
-                if bytes_sent < 2048 or (bytes_sent % LOG_INTERVAL) == 0:
-                    _LOGGER.debug(
-                        "Buffer range: forwarded %d/%d bytes",
-                        bytes_sent,
-                        content_length,
-                    )
+            if remaining > 0:
+                bytes_sent += await self._write_chunks_to_response(
+                    response=response,
+                    offset=range_start + bytes_sent,
+                    content_length=remaining,
+                    range_start=range_start,
+                )
 
             _LOGGER.info(
                 "Buffer range fulfilled: bytes %d-%d, sent %d bytes",
@@ -645,44 +738,19 @@ class StreamForwarder:
 
         await response.prepare(request)
 
-        bytes_sent = 0
         try:
-            while not self._buffer._stopped:
-                chunk = await self._buffer.read(bytes_sent, _BUFFER_SIZE)
-                if not chunk:
-                    # Buffer timed out — check if the buffer was stopped
-                    # (disconnect timer fired) while we were waiting.
-                    if self._buffer._stopped:
-                        break
-                    await asyncio.sleep(0)
-                    continue
-
-                try:
-                    await response.write(chunk)
-                except (ConnectionResetError, ConnectionAbortedError) as exc:
-                    _LOGGER.warning(
-                        "Client disconnected during write: %s", exc
-                    )
-                    break
-
-                bytes_sent += len(chunk)
-
-                # Log every chunk until 2 KB sent, then every 512 KB thereafter
-                if self._verbose_logging:
-                    LOG_INTERVAL = 512 * 1024
-                    if bytes_sent < 2048 or (bytes_sent % LOG_INTERVAL) == 0:
-                        _LOGGER.debug("Forwarded %d bytes so far", bytes_sent)
-
-                await asyncio.sleep(0)
+            bytes_sent = await self._write_chunks_to_response(
+                response=response,
+                offset=0,
+                content_length=None,
+            )
         except asyncio.CancelledError:
             _LOGGER.debug("Stream forwarding cancelled")
             raise
-        except Exception:
-            _LOGGER.exception("Error forwarding stream")
         finally:
             _LOGGER.info(
                 "=== Client disconnected (sent %d bytes) ===",
-                bytes_sent,
+                bytes_sent if 'bytes_sent' in dir() else 0,
             )
 
         return response
@@ -713,6 +781,7 @@ class StreamForwarder:
         tasks so their ``finally`` blocks (including ``_maybe_stop_buffer()``)
         complete before cleanup finishes.
         """
+        self._shutting_down = True
         await self._cancel_disconnect_timer()
         tasks = self._active_connections.copy()
         for task in tasks:
@@ -721,6 +790,4 @@ class StreamForwarder:
         for result in results:
             if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError):
                 _LOGGER.exception("Unexpected error in cancelled task", exc_info=result)
-        # The tasks' finally blocks (via _maybe_stop_buffer()) may have
-        # started a new disconnect timer. Cancel it again for clean state.
-        await self._cancel_disconnect_timer()
+        self._shutting_down = False

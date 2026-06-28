@@ -636,7 +636,6 @@ class MediaServerDevice(UpnpServerDevice):
         ContentDirectoryService,
         ConnectionManagerService,
     ]
-    ROUTES: Sequence[RouteDef] | None = None
 
     def __init__(
         self,
@@ -653,6 +652,12 @@ class MediaServerDevice(UpnpServerDevice):
             config_id=config_id,
         )
         self._forwarders: list[StreamForwarder] = []
+        self._routes: tuple[RouteDef, ...] = ()
+
+    @property
+    def routes(self) -> tuple[RouteDef, ...]:
+        """Return the per-instance stream routes."""
+        return self._routes
 
     def set_forwarders(self, forwarders: list[StreamForwarder]) -> None:
         """Set multiple stream forwarders and register routes.
@@ -670,7 +675,7 @@ class MediaServerDevice(UpnpServerDevice):
         # Backward compat: single stream also works at /stream
         if len(self._forwarders) == 1:
             routes.append(get("/stream", self._forwarders[0].handle_request))
-        self.ROUTES = tuple(routes)
+        self._routes = tuple(routes)
 
     def set_forwarder(self, forwarder: StreamForwarder) -> None:
         """Set a single stream forwarder (backward-compat)."""
