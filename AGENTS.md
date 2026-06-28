@@ -21,6 +21,14 @@ This file documents how the `reciva-dlna-stream` project has been developed in t
 7. **Verify requirements coverage**: After implementation, check that the `requirements/REQ-*.md` status markers match actual implementation state. Make any needed corrections in a fixup commit.
 8. **Save to memory before session end**: Important project context must not be lost
 
+### Pre-Flight Checklist
+
+Before editing any files, internalize this sequence — it **must** be followed for every feature change:
+
+1. **Commit after each layer** — req → spec → feat, in three separate commits. Do NOT batch edits across layers before committing.
+2. **Push when done** — after the last commit in the sequence, run `git push`. Do not wait for a reminder.
+3. **If in doubt, commit** — it's better to have too many small commits than one large one that mixes layers.
+
 ### Three-Layer Document Architecture
 
 ```
